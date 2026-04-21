@@ -11,6 +11,7 @@ import (
 
 	"mcproxy/internal/api"
 	"mcproxy/internal/config"
+	gateapp "mcproxy/internal/gate"
 	"mcproxy/internal/geo"
 	"mcproxy/internal/observability"
 	"mcproxy/internal/store"
@@ -42,6 +43,15 @@ func main() {
 	// HTTP API
 	router := api.NewRouter(cfg, api.Dependencies{Store: st, Geo: geoSvc})
 
+	gateRuntime, err := gateapp.New(context.Background(), gateapp.Options{
+		Bind:       cfg.GateBind,
+		OnlineMode: cfg.GateOnlineMode,
+		Store:      st,
+	})
+	if err != nil {
+		log.Printf("gate init skipped: %v", err)
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           router,
@@ -68,7 +78,18 @@ func main() {
 		}
 	}()
 
+	if gateRuntime != nil {
+		go func() {
+			if err := gateRuntime.Start(ctx); err != nil {
+				errCh <- err
+			}
+		}()
+	}
+
 	log.Printf("mcproxy http api listening on %s", cfg.HTTPAddr)
+	if gateRuntime != nil {
+		log.Printf("mcproxy gate listening on %s", gateRuntime.Bind())
+	}
 
 	select {
 	case err := <-errCh:

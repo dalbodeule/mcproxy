@@ -20,7 +20,6 @@ import (
 	"mcproxy/internal/ent"
 	"mcproxy/internal/ent/accesspolicy"
 	"mcproxy/internal/ent/audit"
-	"mcproxy/internal/ent/counter"
 	"mcproxy/internal/ent/rule"
 	"mcproxy/internal/ent/server"
 )
@@ -29,6 +28,10 @@ type Store struct {
 	db        *sql.DB
 	client    *ent.Client
 	startedAt time.Time
+	cache     *snapshotCache
+	counters  *bucketCounter
+	audits    *auditWriter
+	dist      *distributedCoordinator
 }
 
 type Stats struct {
@@ -193,13 +196,30 @@ func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 		return nil, fmt.Errorf("ent schema create: %w", err)
 	}
 
-	s := &Store{db: db, client: client, startedAt: time.Now()}
+	s := &Store{db: db, client: client, startedAt: time.Now(), cache: newSnapshotCache(), counters: newBucketCounter()}
+	dist, derr := newDistributedCoordinator(ctx, cfg.RedisAddr, cfg.RedisChannel, s.cache.invalidate)
+	if derr != nil {
+		_ = client.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("distributed coordinator: %w", derr)
+	}
+	s.dist = dist
+	s.audits = newAuditWriter(s)
+	_ = s.refreshSnapshots(ctx)
 	return s, nil
 }
 
 func (s *Store) Close() error {
 	if s == nil {
 		return nil
+	}
+	if s.audits != nil {
+		s.audits.stop()
+	}
+	if s.dist != nil {
+		if err := s.dist.Close(); err != nil {
+			return err
+		}
 	}
 	if s.client != nil {
 		if err := s.client.Close(); err != nil {
@@ -226,9 +246,13 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	if err != nil {
 		return Stats{}, err
 	}
-	counters, err := s.client.Counter.Query().Count(ctx)
-	if err != nil {
-		return Stats{}, err
+	counters := s.counters.size()
+	if s.dist != nil {
+		distributedCounters, derr := s.dist.CountCounters(ctx)
+		if derr != nil {
+			return Stats{}, derr
+		}
+		counters = distributedCounters
 	}
 	blocked, err := s.client.Audit.Query().Where(audit.EventEQ("connect.blocked")).Count(ctx)
 	if err != nil {
@@ -269,6 +293,8 @@ func (s *Store) CreateServer(ctx context.Context, in ServerInput) (*ServerDTO, e
 		return nil, err
 	}
 	dto := serverDTO(n)
+	s.cache.invalidate()
+	s.publishInvalidate(ctx)
 	return &dto, nil
 }
 
@@ -288,28 +314,22 @@ func (s *Store) UpdateServer(ctx context.Context, id int, in ServerInput) (*Serv
 		return nil, err
 	}
 	dto := serverDTO(n)
+	s.cache.invalidate()
+	s.publishInvalidate(ctx)
 	return &dto, nil
 }
 
 func (s *Store) DeleteServer(ctx context.Context, id int) error {
-	return s.client.Server.DeleteOneID(id).Exec(ctx)
+	err := s.client.Server.DeleteOneID(id).Exec(ctx)
+	if err == nil {
+		s.cache.invalidate()
+		s.publishInvalidate(ctx)
+	}
+	return err
 }
 
 func (s *Store) GetGlobalPolicy(ctx context.Context) (*PolicyDTO, error) {
-	n, err := s.client.AccessPolicy.Query().Where(accesspolicy.Not(accesspolicy.HasServer())).First(ctx)
-	if err != nil {
-		if ent.IsNotFound(err) {
-			created, cerr := s.client.AccessPolicy.Create().Save(ctx)
-			if cerr != nil {
-				return nil, cerr
-			}
-			dto := policyDTO("global", created)
-			return &dto, nil
-		}
-		return nil, err
-	}
-	dto := policyDTO("global", n)
-	return &dto, nil
+	return s.cachedGlobalPolicy(ctx)
 }
 
 func (s *Store) UpsertGlobalPolicy(ctx context.Context, in PolicyInput) (*PolicyDTO, error) {
@@ -325,6 +345,8 @@ func (s *Store) UpsertGlobalPolicy(ctx context.Context, in PolicyInput) (*Policy
 			return nil, cerr
 		}
 		dto := policyDTO("global", n)
+		s.cache.invalidate()
+		s.publishInvalidate(ctx)
 		return &dto, nil
 	}
 	b := s.client.AccessPolicy.UpdateOneID(current.ID)
@@ -334,6 +356,8 @@ func (s *Store) UpsertGlobalPolicy(ctx context.Context, in PolicyInput) (*Policy
 		return nil, err
 	}
 	dto := policyDTO("global", n)
+	s.cache.invalidate()
+	s.publishInvalidate(ctx)
 	return &dto, nil
 }
 
@@ -379,11 +403,18 @@ func (s *Store) CreateRule(ctx context.Context, in RuleInput) (*RuleDTO, error) 
 		return nil, err
 	}
 	dto := ruleDTO(n)
+	s.cache.invalidate()
+	s.publishInvalidate(ctx)
 	return &dto, nil
 }
 
 func (s *Store) DeleteRule(ctx context.Context, id int) error {
-	return s.client.Rule.DeleteOneID(id).Exec(ctx)
+	err := s.client.Rule.DeleteOneID(id).Exec(ctx)
+	if err == nil {
+		s.cache.invalidate()
+		s.publishInvalidate(ctx)
+	}
+	return err
 }
 
 func (s *Store) EvaluateAttempt(ctx context.Context, in EvaluateAttemptInput) (*EvaluateAttemptResult, error) {
@@ -397,15 +428,15 @@ func (s *Store) EvaluateAttempt(ctx context.Context, in EvaluateAttemptInput) (*
 		record = *in.Record
 	}
 
-	globalPolicy, err := s.GetGlobalPolicy(ctx)
+	globalPolicy, err := s.cachedGlobalPolicy(ctx)
 	if err != nil {
 		return nil, err
 	}
-	serverPolicy, err := s.getServerPolicy(ctx, in.ServerID)
+	serverPolicy, err := s.cachedServerPolicy(ctx, in.ServerID)
 	if err != nil {
 		return nil, err
 	}
-	relevantRules, err := s.getActiveRules(ctx, in.ServerID)
+	relevantRules, err := s.cachedRules(ctx, in.ServerID)
 	if err != nil {
 		return nil, err
 	}
@@ -606,6 +637,12 @@ func normalizeNickname(v string) string {
 }
 
 func (s *Store) getServerPolicy(ctx context.Context, serverID *int) (*PolicyDTO, error) {
+	if _, err := s.preloadServerPolicy(ctx, serverIDValue(serverID)); serverID != nil && err != nil {
+		if ent.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
 	if serverID == nil {
 		return nil, nil
 	}
@@ -756,49 +793,40 @@ func overThreshold(current, limit int) bool {
 }
 
 func (s *Store) bumpCounter(ctx context.Context, serverID *int, kind, key string, windowSec int, record bool) (int, error) {
-	q := s.client.Counter.Query().Where(counter.KindEQ(kind), counter.KeyEQ(key), counter.WindowSecEQ(windowSec))
+	_ = ctx
+	scope := "global"
 	if serverID != nil {
-		q = q.Where(counter.HasServerWith(server.IDEQ(*serverID)))
-	} else {
-		q = q.Where(counter.Not(counter.HasServer()))
+		scope = "server"
 	}
-	n, err := q.First(ctx)
-	if err != nil {
-		if !ent.IsNotFound(err) {
-			return 0, err
-		}
-		if !record {
-			return 0, nil
-		}
-		b := s.client.Counter.Create().SetKind(kind).SetKey(key).SetWindowSec(windowSec).SetCount(1).SetLastSeen(time.Now())
-		if serverID != nil {
-			b.SetServerID(*serverID)
-		}
-		created, cerr := b.Save(ctx)
-		if cerr != nil {
-			return 0, cerr
-		}
-		return created.Count, nil
-	}
-	now := time.Now()
-	countVal := n.Count
-	if now.Sub(n.LastSeen) > time.Duration(windowSec)*time.Second {
-		countVal = 0
-	}
-	if record {
-		countVal++
-		_, err = s.client.Counter.UpdateOneID(n.ID).SetCount(countVal).SetLastSeen(now).Save(ctx)
-		if err != nil {
-			return 0, err
+	if s.dist != nil {
+		countVal, err := s.dist.IncrWindow(ctx, scope, serverID, kind, key, windowSec, record)
+		if err == nil {
+			return countVal, nil
 		}
 	}
+	countVal := s.counters.bump(scope, serverID, kind, key, windowSec, record)
 	return countVal, nil
 }
 
 func (s *Store) recordAudit(ctx context.Context, serverID *int, event string, details map[string]any) error {
+	_ = ctx
+	if s.audits != nil {
+		s.audits.enqueue(auditEvent{serverID: serverID, event: event, details: details})
+		return nil
+	}
+	return s.writeAudit(context.Background(), serverID, event, details)
+}
+
+func (s *Store) writeAudit(ctx context.Context, serverID *int, event string, details map[string]any) error {
 	b := s.client.Audit.Create().SetEvent(event).SetDetails(details)
 	if serverID != nil {
 		b.SetServerID(*serverID)
 	}
 	return b.Exec(ctx)
+}
+
+func (s *Store) publishInvalidate(ctx context.Context) {
+	if s.dist != nil {
+		s.dist.PublishInvalidate(ctx)
+	}
 }

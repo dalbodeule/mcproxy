@@ -12,6 +12,25 @@ mcproxy는 Minekube Gate(Go)를 기반으로 한 Minecraft(Java Edition) 보안 
 - GeoLite2-City.mmdb 기반 국가별 Allow/Deny 정책 적용
 - 서버별 개별 정책(임계값, Geo 정책, 차단 목록) 관리
 - entgo ORM 기반 영속화: 기본 SQLite, 선택적으로 PostgreSQL
+- 메모리 기반 정책/룰 snapshot 캐시
+- 슬라이딩 윈도우 성격의 메모리 카운터 및 선택적 Redis 분산 동기화
+- 비동기 감사 이벤트 파이프라인
+- distroless 멀티스테이지 컨테이너 이미지 제공: [Dockerfile](Dockerfile)
+
+현재 구현 상태
+
+- 관리 Plane 초안 구현 완료
+  - 서버 관리: [internal/api/router.go](internal/api/router.go)
+  - 전역 정책 관리: [internal/api/router.go](internal/api/router.go)
+  - 룰 관리 및 접속 평가 API: [internal/api/router.go](internal/api/router.go)
+- 데이터 저장/정책 엔진 기반 구현 완료
+  - entgo 스키마/마이그레이션: [internal/ent](internal/ent)
+  - 정책 평가 및 차단 로직: [internal/store/store.go](internal/store/store.go)
+  - 캐시/카운터/분산 동기화: [internal/store/cache.go](internal/store/cache.go), [internal/store/counter_engine.go](internal/store/counter_engine.go), [internal/store/distributed.go](internal/store/distributed.go)
+- Minekube Gate 실행 및 접속확인 초안 구현 완료
+  - Gate 런타임: [internal/gate/runtime.go](internal/gate/runtime.go)
+  - PreLogin 기반 차단 경로 및 Ping 로깅 포함
+  - 메인 엔트리포인트 통합: [cmd/mcproxy/main.go](cmd/mcproxy/main.go)
 
 아키텍처 개요
 
@@ -44,9 +63,14 @@ mcproxy는 Minekube Gate(Go)를 기반으로 한 Minecraft(Java Edition) 보안 
   - 데이터베이스 종류: sqlite 또는 postgres
   - SQLite 파일 경로: 예) data/mcproxy.db
   - PostgreSQL 연결: 호스트, 포트, 사용자명, 비밀번호, DB명, SSL 모드 등
+  - Redis 연결(선택): 예) 127.0.0.1:6379
   - GeoIP DB 경로: 예) data/GeoLite2-City.mmdb
   - HTTP API 바인드 주소: 예) 0.0.0.0:8080
+  - Gate 바인드 주소: 예) 0.0.0.0:25565
+  - Gate 온라인 모드 여부
   - 관리자 인증 토큰 또는 헤더 키
+
+- 실제 예시 파일: [inc.env](inc.env)
 
 HTTP API 설계(요약)
 
@@ -114,6 +138,7 @@ HTTP API 설계(요약)
 
 - 모든 정책 변경 및 차단 이벤트에 대한 감사 로그를 저장합니다(시각, 주체, 대상, 이유, 규칙 ID 등).
 - 통계 및 메트릭(선택): Prometheus 익스포트 옵션 제공 예정.
+- 구조화 요청 로그 및 관리자 인증 실패 로그를 기록합니다: [internal/observability/logging.go](internal/observability/logging.go)
 
 데이터 모델(개념)
 
@@ -136,9 +161,16 @@ GeoLite2 사용 안내
 
 성능 및 운영 팁
 
-- 카운터 저장은 메모리 우선, 주기적 스냅샷을 통해 영속화하는 하이브리드 전략을 권장합니다.
+- 카운터 저장은 메모리 우선이며, 현재는 버킷 기반 카운터를 사용합니다: [internal/store/counter_engine.go](internal/store/counter_engine.go)
+- 정책/룰 평가는 snapshot 캐시를 우선 사용합니다: [internal/store/cache.go](internal/store/cache.go)
+- 다중 인스턴스 환경에서는 Redis를 통한 분산 카운터/캐시 무효화를 사용할 수 있습니다: [internal/store/distributed.go](internal/store/distributed.go)
 - 애그레시브한 임계값은 정상 사용자에게 영향이 갈 수 있으므로 점진적으로 조정하십시오.
 - 백엔드 서버별로 트래픽 특성이 다를 수 있으니 서버별 임계값 튜닝을 활용하십시오.
+
+컨테이너 실행
+
+- 이미지 빌드: `docker build -t mcproxy .`
+- 런타임 이미지는 [`gcr.io/distroless/base-debian13:nonroot`](Dockerfile:12) 기반입니다.
 
 마이그레이션 및 스키마(개요)
 
@@ -148,7 +180,8 @@ GeoLite2 사용 안내
 로드맵
 
 - 초기 MVP: 전역/서버별 임계값, IP/닉네임 Allow/Deny, Geo 정책, 기본 감사 로그, SQLite 지원
-- 확장: PostgreSQL 최적화, Prometheus 메트릭, 관리 UI, 분산 카운터(다중 인스턴스), 서명 기반 세션 전달
+- 현재 반영: Gate 런타임 초안, PostgreSQL/Redis 운영 예시, 비동기 감사 파이프라인, 메모리 캐시/카운터
+- 다음 확장: Prometheus 메트릭, 관리 UI, Gate 이벤트 확장(Login/PostConnect), 분산 카운터 고도화, 서명 기반 세션 전달
 
 라이선스
 
@@ -157,5 +190,5 @@ GeoLite2 사용 안내
 관련 문서
 
 - 영어 요약: [README.md](README.md)
+- 진행 현황: [progress.md](progress.md)
 - Minekube Gate: https://gate.minekube.com/
-

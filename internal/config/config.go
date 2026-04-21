@@ -4,16 +4,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Config holds runtime configuration for mcproxy.
 type Config struct {
-	HTTPAddr      string
-	AdminToken    string
-	GeoIPPath     string
-	AdminThrottle int
-	DBDriver      string // "sqlite" (default) or "postgres"
-	DSN           string // full connection string for the chosen driver
+	HTTPAddr       string
+	AdminToken     string
+	GeoIPPath      string
+	AdminThrottle  int
+	RedisAddr      string
+	RedisChannel   string
+	GateBind       string
+	GateOnlineMode bool
+	DBDriver       string // "sqlite" (default) or "postgres"
+	DSN            string // full connection string for the chosen driver
 }
 
 // LoadFromEnv reads configuration from environment variables with sane defaults.
@@ -30,6 +35,10 @@ func LoadFromEnv() Config {
 	adminToken := getenv("MCPROXY_ADMIN_TOKEN", "")
 	geoPath := getenv("MCPROXY_GEOIP_PATH", "")
 	adminThrottle := getenvInt("MCPROXY_ADMIN_THROTTLE", 32)
+	redisAddr := getenv("MCPROXY_REDIS_ADDR", "")
+	redisChannel := getenv("MCPROXY_REDIS_CHANNEL", "mcproxy:events")
+	gateBind := getenv("MCPROXY_GATE_BIND", "0.0.0.0:25565")
+	gateOnlineMode := getenvBool("MCPROXY_GATE_ONLINE_MODE", false)
 	driver := getenv("MCPROXY_DB_DRIVER", "sqlite")
 
 	var dsn string
@@ -49,12 +58,16 @@ func LoadFromEnv() Config {
 	}
 
 	return Config{
-		HTTPAddr:      httpAddr,
-		AdminToken:    adminToken,
-		GeoIPPath:     geoPath,
-		AdminThrottle: adminThrottle,
-		DBDriver:      driver,
-		DSN:           dsn,
+		HTTPAddr:       httpAddr,
+		AdminToken:     adminToken,
+		GeoIPPath:      geoPath,
+		AdminThrottle:  adminThrottle,
+		RedisAddr:      redisAddr,
+		RedisChannel:   redisChannel,
+		GateBind:       gateBind,
+		GateOnlineMode: gateOnlineMode,
+		DBDriver:       driver,
+		DSN:            dsn,
 	}
 }
 
@@ -80,4 +93,16 @@ func getenvInt(key string, def int) int {
 		return def
 	}
 	return out
+}
+
+func getenvBool(key string, def bool) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return def
+	}
 }
