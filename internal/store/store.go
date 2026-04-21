@@ -138,11 +138,15 @@ func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 		// Ensure directory exists if DSN is a file path.
 		if dsn != ":memory:" && dsn != "file::memory:?cache=shared" {
 			// Handle DSN that may be a URI (e.g., file:path?cache=shared)
-			// Try to extract path safely; fallback to raw string.
+			// or plain path with query parameters (e.g. data/mcproxy.db?_fk=1).
+			// Try to extract only the filesystem path part safely.
 			p := dsn
-			if strings.HasPrefix(dsn, "file:") {
+			if i := strings.IndexByte(p, '?'); i >= 0 {
+				p = p[:i]
+			}
+			if strings.HasPrefix(p, "file:") {
 				// file:path or file:/abs/path
-				u, err := url.Parse(dsn)
+				u, err := url.Parse(p)
 				if err == nil {
 					if u.Opaque != "" {
 						p = u.Opaque
@@ -150,6 +154,9 @@ func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 						p = u.Path
 					}
 				}
+			}
+			if decoded, err := url.PathUnescape(p); err == nil && decoded != "" {
+				p = decoded
 			}
 			if dir := filepath.Dir(p); dir != "." && dir != "" {
 				if err := os.MkdirAll(dir, 0o755); err != nil {

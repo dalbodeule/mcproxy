@@ -2,10 +2,11 @@ package config
 
 import (
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/joho/godotenv"
 )
 
 // Config holds runtime configuration for mcproxy.
@@ -26,6 +27,8 @@ type Config struct {
 
 // LoadFromEnv reads configuration from environment variables with sane defaults.
 func LoadFromEnv() Config {
+	_ = godotenv.Load()
+
 	httpAddr := getenv("MCPROXY_HTTP_ADDR", "127.0.0.1:8080")
 	adminToken := getenv("MCPROXY_ADMIN_TOKEN", "")
 	geoPath := getenv("MCPROXY_GEOIP_PATH", "")
@@ -41,14 +44,12 @@ func LoadFromEnv() Config {
 	var dsn string
 	switch driver {
 	case "sqlite":
-		p := getenv("MCPROXY_SQLITE_PATH", filepath.Join("data", "mcproxy.db"))
-		dsn = sqliteDSN(p)
+		dsn = getenv("MCPROXY_SQLITE_PATH", filepath.Join("data", "mcproxy.db", "?_fk=1"))
 	case "postgres":
 		dsn = getenv("MCPROXY_POSTGRES_DSN", "")
 	default:
-		p := filepath.Join("data", "mcproxy.db")
+		dsn = filepath.Join("data", "mcproxy.db", "?_fk=1")
 		driver = "sqlite"
-		dsn = sqliteDSN(p)
 	}
 
 	return Config{
@@ -68,7 +69,7 @@ func LoadFromEnv() Config {
 }
 
 func (c Config) String() string {
-	return fmt.Sprintf("http=%s db=%s geo=%s gate=%s identify=%s", c.HTTPAddr, c.DBDriver, c.GeoIPPath, c.GateBind, c.LogIdentify)
+	return fmt.Sprintf("http=%s db=%s dsn=%s geo=%s gate=%s identify=%s", c.HTTPAddr, c.DBDriver, c.DSN, c.GeoIPPath, c.GateBind, c.LogIdentify)
 }
 
 func getenv(key, def string) string {
@@ -100,21 +101,4 @@ func getenvBool(key string, def bool) bool {
 	default:
 		return def
 	}
-}
-
-func sqliteDSN(path string) string {
-	if path == "" {
-		return "file:data/mcproxy.db?_fk=1"
-	}
-	if strings.HasPrefix(path, "file:") {
-		sep := "?"
-		if strings.Contains(path, "?") {
-			sep = "&"
-		}
-		if strings.Contains(path, "_fk=") {
-			return path
-		}
-		return path + sep + "_fk=1"
-	}
-	return "file:" + url.PathEscape(path) + "?_fk=1"
 }

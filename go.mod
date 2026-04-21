@@ -7,12 +7,13 @@ require (
 	github.com/go-chi/chi/v5 v5.2.5 // HTTP router
 	github.com/jackc/pgx/v5 v5.9.1 // PostgreSQL driver core
 	github.com/oschwald/geoip2-golang v1.13.0 // GeoIP reader
-	modernc.org/sqlite v1.48.2 // SQLite (pure Go)
+	modernc.org/sqlite v1.49.1 // SQLite (pure Go)
 )
 
 require (
 	github.com/grafana/loki-client-go v0.0.0-20251015150631-c42bbddc310a
-	github.com/redis/go-redis/v9 v9.7.0
+	github.com/joho/godotenv v1.3.0
+	github.com/redis/go-redis/v9 v9.7.3
 	github.com/robinbraemer/event v0.1.1
 	github.com/samber/slog-loki/v3 v3.7.2
 	github.com/samber/slog-multi v1.8.0
@@ -102,7 +103,7 @@ require (
 	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
-	golang.org/x/sync v0.19.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
@@ -111,7 +112,7 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	modernc.org/libc v1.70.0 // indirect
+	modernc.org/libc v1.72.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
