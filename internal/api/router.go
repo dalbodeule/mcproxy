@@ -3,7 +3,6 @@ package api
 import (
 	"crypto/subtle"
 	"encoding/json"
-	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -53,7 +52,7 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 			st, err := deps.Store.Stats(r.Context())
 			if err != nil {
 				// Avoid leaking internal errors to clients
-				log.Printf("stats handler error: %v", err)
+				observability.Error("stats_handler_error", "error", err)
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
 				return
 			}
@@ -214,7 +213,7 @@ func adminAuth(token string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if token == "" {
-				observability.LogJSON("warn", "admin_api_disabled", map[string]any{"path": r.URL.Path})
+				observability.Warn("admin_api_disabled", "path", r.URL.Path)
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "admin api disabled: MCPROXY_ADMIN_TOKEN is not configured"})
 				return
 			}
@@ -225,7 +224,7 @@ func adminAuth(token string) func(http.Handler) http.Handler {
 			}
 
 			if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
-				observability.LogJSON("warn", "admin_auth_failed", map[string]any{"path": r.URL.Path, "remote_ip": r.RemoteAddr})
+				observability.Warn("admin_auth_failed", "path", r.URL.Path, "remote_ip", r.RemoteAddr)
 				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 				return
 			}
@@ -259,7 +258,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		// Best-effort logging only; headers already sent
-		log.Printf("writeJSON encode error: %v", err)
+		observability.Error("write_json_encode_error", "error", err)
 	}
 }
 
@@ -306,6 +305,6 @@ func handleStoreError(w http.ResponseWriter, action string, err error) bool {
 }
 
 func internalError(w http.ResponseWriter, action string, err error) {
-	log.Printf("%s: %v", action, err)
+	observability.Error("internal_error", "action", action, "error", err)
 	writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
 }

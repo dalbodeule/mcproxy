@@ -74,18 +74,18 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 			Record:   boolPtr(true),
 		})
 		if err != nil {
-			observability.LogJSON("error", "gate_prelogin_evaluate_failed", map[string]any{"err": err.Error(), "remote_ip": remoteIP, "username": e.Username()})
+			observability.Error("gate_prelogin_evaluate_failed", "error", err, "remote_ip", remoteIP, "username", e.Username())
 			e.Deny(&component.Text{Content: "Security policy evaluation failed"})
 			return
 		}
 		if !res.Allowed {
-			observability.LogJSON("warn", "gate_prelogin_denied", map[string]any{"remote_ip": remoteIP, "username": e.Username(), "reason": res.Reason})
+			observability.Warn("gate_prelogin_denied", "remote_ip", remoteIP, "username", e.Username(), "reason", res.Reason)
 			e.Deny(&component.Text{Content: "Connection denied: " + res.Reason})
 		}
 	})
 
 	event.Subscribe(p.Event(), 0, func(e *javaproxy.PingEvent) {
-		observability.LogJSON("info", "gate_ping", map[string]any{"remote_ip": netIPString(e.Connection().RemoteAddr())})
+		observability.Info("gate_ping", "remote_ip", netIPString(e.Connection().RemoteAddr()))
 	})
 
 	event.Subscribe(p.Event(), 0, func(e *javaproxy.PlayerChooseInitialServerEvent) {
@@ -109,7 +109,7 @@ func (r *Runtime) Start(ctx context.Context) error {
 	if p == nil {
 		return fmt.Errorf("gate proxy not initialized")
 	}
-	observability.LogJSON("info", "gate_starting", map[string]any{"bind": r.bind})
+	observability.Info("gate_starting", "bind", r.bind)
 	return p.Start(ctx)
 }
 
@@ -126,7 +126,7 @@ func (r *Runtime) syncLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := r.syncServers(ctx); err != nil {
-				observability.LogJSON("warn", "gate_sync_servers_failed", map[string]any{"err": err.Error()})
+				observability.Warn("gate_sync_servers_failed", "error", err)
 			}
 		}
 	}

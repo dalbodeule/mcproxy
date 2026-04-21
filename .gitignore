@@ -217,3 +217,5 @@ $RECYCLE.BIN/
 # End of https://www.toptal.com/developers/gitignore/api/go,goland,dotenv,windows,linux,macos
 
 *.mmdb
+bin/
+data/

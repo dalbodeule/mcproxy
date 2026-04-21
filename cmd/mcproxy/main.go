@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
-	"log"
 	"net"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -19,28 +19,30 @@ import (
 
 func main() {
 	cfg := config.LoadFromEnv()
-	observability.LogJSON("info", "mcproxy_starting", map[string]any{"config": cfg.String()})
+	if err := observability.Init(cfg.LokiHost, cfg.LogIdentify); err != nil {
+		_, _ = os.Stderr.WriteString("failed to initialize logger: " + err.Error() + "\n")
+		os.Exit(1)
+	}
+	observability.Info("mcproxy_starting", "config", cfg.String())
 
-	// Store (DB)
 	st, err := store.Open(context.Background(), cfg)
 	if err != nil {
-		log.Fatalf("store open: %v", err)
+		observability.Error("store_open_failed", "error", err)
+		os.Exit(1)
 	}
 	defer st.Close()
 
-	// GeoIP (optional until path provided)
 	var geoSvc *geo.Service
 	if cfg.GeoIPPath != "" {
 		g, gerr := geo.Open(cfg.GeoIPPath)
 		if gerr != nil {
-			log.Printf("geo open failed (continuing without GeoIP): %v", gerr)
+			observability.Warn("geo_open_failed", "error", gerr)
 		} else {
 			geoSvc = g
 			defer geoSvc.Close()
 		}
 	}
 
-	// HTTP API
 	router := api.NewRouter(cfg, api.Dependencies{Store: st, Geo: geoSvc})
 
 	gateRuntime, err := gateapp.New(context.Background(), gateapp.Options{
@@ -49,7 +51,7 @@ func main() {
 		Store:      st,
 	})
 	if err != nil {
-		log.Printf("gate init skipped: %v", err)
+		observability.Warn("gate_init_skipped", "error", err)
 	}
 
 	srv := &http.Server{
@@ -59,17 +61,17 @@ func main() {
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       60 * time.Second,
-		MaxHeaderBytes:    1 << 20, // 1 MiB
+		MaxHeaderBytes:    1 << 20,
 	}
 
-	// Graceful shutdown on SIGINT/SIGTERM
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	errCh := make(chan error, 1)
 
 	ln, err := net.Listen("tcp", cfg.HTTPAddr)
 	if err != nil {
-		log.Fatalf("http listen: %v", err)
+		observability.Error("http_listen_failed", "error", err)
+		os.Exit(1)
 	}
 
 	go func() {
@@ -86,20 +88,21 @@ func main() {
 		}()
 	}
 
-	log.Printf("mcproxy http api listening on %s", cfg.HTTPAddr)
+	observability.Info("http_api_listening", "addr", cfg.HTTPAddr)
 	if gateRuntime != nil {
-		log.Printf("mcproxy gate listening on %s", gateRuntime.Bind())
+		observability.Info("gate_listening", "addr", gateRuntime.Bind())
 	}
 
 	select {
 	case err := <-errCh:
-		log.Fatalf("http server error: %v", err)
+		observability.Error("server_runtime_error", "error", err)
+		os.Exit(1)
 	case <-ctx.Done():
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("http server shutdown error: %v", err)
+		observability.Error("http_server_shutdown_error", "error", err)
 	}
 }

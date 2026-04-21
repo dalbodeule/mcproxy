@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,8 @@ type Config struct {
 	AdminThrottle  int
 	RedisAddr      string
 	RedisChannel   string
+	LokiHost       string
+	LogIdentify    string
 	GateBind       string
 	GateOnlineMode bool
 	DBDriver       string // "sqlite" (default) or "postgres"
@@ -22,14 +25,6 @@ type Config struct {
 }
 
 // LoadFromEnv reads configuration from environment variables with sane defaults.
-//
-// Env vars:
-// - MCPROXY_HTTP_ADDR (default "127.0.0.1:8080")
-// - MCPROXY_ADMIN_TOKEN (required for /api/v1 management endpoints)
-// - MCPROXY_GEOIP_PATH (optional)
-// - MCPROXY_DB_DRIVER (sqlite|postgres; default sqlite)
-// - MCPROXY_SQLITE_PATH (default data/mcproxy.db)
-// - MCPROXY_POSTGRES_DSN (postgres connection string; required if DB_DRIVER=postgres)
 func LoadFromEnv() Config {
 	httpAddr := getenv("MCPROXY_HTTP_ADDR", "127.0.0.1:8080")
 	adminToken := getenv("MCPROXY_ADMIN_TOKEN", "")
@@ -37,6 +32,8 @@ func LoadFromEnv() Config {
 	adminThrottle := getenvInt("MCPROXY_ADMIN_THROTTLE", 32)
 	redisAddr := getenv("MCPROXY_REDIS_ADDR", "")
 	redisChannel := getenv("MCPROXY_REDIS_CHANNEL", "mcproxy:events")
+	lokiHost := getenv("MCPROXY_LOKI_HOST", "")
+	logIdentify := getenv("MCPROXY_LOG_IDENTIFY", "local")
 	gateBind := getenv("MCPROXY_GATE_BIND", "0.0.0.0:25565")
 	gateOnlineMode := getenvBool("MCPROXY_GATE_ONLINE_MODE", false)
 	driver := getenv("MCPROXY_DB_DRIVER", "sqlite")
@@ -45,16 +42,13 @@ func LoadFromEnv() Config {
 	switch driver {
 	case "sqlite":
 		p := getenv("MCPROXY_SQLITE_PATH", filepath.Join("data", "mcproxy.db"))
-		// modernc.org/sqlite driver name is "sqlite"; DSN is a file path or URI.
-		// Ensure directory exists lazily in store.Open.
-		dsn = p
+		dsn = sqliteDSN(p)
 	case "postgres":
 		dsn = getenv("MCPROXY_POSTGRES_DSN", "")
 	default:
-		// Fallback to sqlite if unknown driver provided.
 		p := filepath.Join("data", "mcproxy.db")
 		driver = "sqlite"
-		dsn = p
+		dsn = sqliteDSN(p)
 	}
 
 	return Config{
@@ -64,6 +58,8 @@ func LoadFromEnv() Config {
 		AdminThrottle:  adminThrottle,
 		RedisAddr:      redisAddr,
 		RedisChannel:   redisChannel,
+		LokiHost:       lokiHost,
+		LogIdentify:    logIdentify,
 		GateBind:       gateBind,
 		GateOnlineMode: gateOnlineMode,
 		DBDriver:       driver,
@@ -72,8 +68,7 @@ func LoadFromEnv() Config {
 }
 
 func (c Config) String() string {
-	// Avoid logging DSN to prevent credential leakage
-	return fmt.Sprintf("http=%s db=%s geo=%s", c.HTTPAddr, c.DBDriver, c.GeoIPPath)
+	return fmt.Sprintf("http=%s db=%s geo=%s gate=%s identify=%s", c.HTTPAddr, c.DBDriver, c.GeoIPPath, c.GateBind, c.LogIdentify)
 }
 
 func getenv(key, def string) string {
@@ -105,4 +100,21 @@ func getenvBool(key string, def bool) bool {
 	default:
 		return def
 	}
+}
+
+func sqliteDSN(path string) string {
+	if path == "" {
+		return "file:data/mcproxy.db?_fk=1"
+	}
+	if strings.HasPrefix(path, "file:") {
+		sep := "?"
+		if strings.Contains(path, "?") {
+			sep = "&"
+		}
+		if strings.Contains(path, "_fk=") {
+			return path
+		}
+		return path + sep + "_fk=1"
+	}
+	return "file:" + url.PathEscape(path) + "?_fk=1"
 }
