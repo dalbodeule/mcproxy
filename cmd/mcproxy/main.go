@@ -12,11 +12,13 @@ import (
 	"mcproxy/internal/api"
 	"mcproxy/internal/config"
 	"mcproxy/internal/geo"
+	"mcproxy/internal/observability"
 	"mcproxy/internal/store"
 )
 
 func main() {
 	cfg := config.LoadFromEnv()
+	observability.LogJSON("info", "mcproxy_starting", map[string]any{"config": cfg.String()})
 
 	// Store (DB)
 	st, err := store.Open(context.Background(), cfg)

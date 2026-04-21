@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"mcproxy/internal/config"
 	"mcproxy/internal/ent"
 	"mcproxy/internal/geo"
+	"mcproxy/internal/observability"
 	"mcproxy/internal/store"
 )
 
@@ -31,6 +33,8 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 		middleware.RealIP,
 		middleware.Recoverer,
 		middleware.Timeout(60*time.Second),
+		observability.RequestLogger,
+		securityHeaders,
 	)
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -41,6 +45,8 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 	})
 
 	r.Route("/api/v1", func(api chi.Router) {
+		api.Use(middleware.ThrottleBacklog(cfg.AdminThrottle, cfg.AdminThrottle*2, 30*time.Second))
+		api.Use(limitBody(1 << 20))
 		api.Use(adminAuth(cfg.AdminToken))
 
 		api.Get("/stats", func(w http.ResponseWriter, r *http.Request) {
@@ -143,6 +149,62 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 				writeJSON(w, http.StatusOK, item)
 			})
 		})
+
+		api.Route("/rules", func(rr chi.Router) {
+			rr.Get("/", func(w http.ResponseWriter, r *http.Request) {
+				serverID, ok := optionalQueryInt(w, r, "server_id")
+				if !ok {
+					return
+				}
+				items, err := deps.Store.ListRules(r.Context(), serverID)
+				if handleStoreError(w, "list rules", err) {
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]any{"items": items})
+			})
+			rr.Post("/", func(w http.ResponseWriter, r *http.Request) {
+				var in store.RuleInput
+				if err := decodeJSON(r, &in); err != nil {
+					writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+					return
+				}
+				item, err := deps.Store.CreateRule(r.Context(), in)
+				if err != nil {
+					writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+					return
+				}
+				writeJSON(w, http.StatusCreated, item)
+			})
+			rr.Delete("/{ruleID}", func(w http.ResponseWriter, r *http.Request) {
+				id, ok := pathInt(w, r, "ruleID")
+				if !ok {
+					return
+				}
+				if err := deps.Store.DeleteRule(r.Context(), id); handleStoreError(w, "delete rule", err) {
+					return
+				}
+				w.WriteHeader(http.StatusNoContent)
+			})
+		})
+
+		api.Post("/evaluate", func(w http.ResponseWriter, r *http.Request) {
+			var in store.EvaluateAttemptInput
+			if err := decodeJSON(r, &in); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+				return
+			}
+			if strings.TrimSpace(in.Country) == "" && deps.Geo != nil {
+				if ip := net.ParseIP(strings.TrimSpace(in.IP)); ip != nil {
+					in.Country = deps.Geo.CountryCode(ip)
+				}
+			}
+			item, err := deps.Store.EvaluateAttempt(r.Context(), in)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, item)
+		})
 	})
 
 	return r
@@ -152,6 +214,7 @@ func adminAuth(token string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if token == "" {
+				observability.LogJSON("warn", "admin_api_disabled", map[string]any{"path": r.URL.Path})
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "admin api disabled: MCPROXY_ADMIN_TOKEN is not configured"})
 				return
 			}
@@ -162,10 +225,30 @@ func adminAuth(token string) func(http.Handler) http.Handler {
 			}
 
 			if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
+				observability.LogJSON("warn", "admin_auth_failed", map[string]any{"path": r.URL.Path, "remote_ip": r.RemoteAddr})
 				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 				return
 			}
 
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func limitBody(n int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, n)
 			next.ServeHTTP(w, r)
 		})
 	}
@@ -195,6 +278,19 @@ func pathInt(w http.ResponseWriter, r *http.Request, name string) (int, bool) {
 		return 0, false
 	}
 	return id, true
+}
+
+func optionalQueryInt(w http.ResponseWriter, r *http.Request, name string) (*int, bool) {
+	v := strings.TrimSpace(r.URL.Query().Get(name))
+	if v == "" {
+		return nil, true
+	}
+	id, err := strconv.Atoi(v)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid query parameter: " + name})
+		return nil, false
+	}
+	return &id, true
 }
 
 func handleStoreError(w http.ResponseWriter, action string, err error) bool {

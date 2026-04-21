@@ -8,11 +8,12 @@ import (
 
 // Config holds runtime configuration for mcproxy.
 type Config struct {
-	HTTPAddr   string
-	AdminToken string
-	GeoIPPath  string
-	DBDriver   string // "sqlite" (default) or "postgres"
-	DSN        string // full connection string for the chosen driver
+	HTTPAddr      string
+	AdminToken    string
+	GeoIPPath     string
+	AdminThrottle int
+	DBDriver      string // "sqlite" (default) or "postgres"
+	DSN           string // full connection string for the chosen driver
 }
 
 // LoadFromEnv reads configuration from environment variables with sane defaults.
@@ -28,6 +29,7 @@ func LoadFromEnv() Config {
 	httpAddr := getenv("MCPROXY_HTTP_ADDR", "127.0.0.1:8080")
 	adminToken := getenv("MCPROXY_ADMIN_TOKEN", "")
 	geoPath := getenv("MCPROXY_GEOIP_PATH", "")
+	adminThrottle := getenvInt("MCPROXY_ADMIN_THROTTLE", 32)
 	driver := getenv("MCPROXY_DB_DRIVER", "sqlite")
 
 	var dsn string
@@ -47,11 +49,12 @@ func LoadFromEnv() Config {
 	}
 
 	return Config{
-		HTTPAddr:   httpAddr,
-		AdminToken: adminToken,
-		GeoIPPath:  geoPath,
-		DBDriver:   driver,
-		DSN:        dsn,
+		HTTPAddr:      httpAddr,
+		AdminToken:    adminToken,
+		GeoIPPath:     geoPath,
+		AdminThrottle: adminThrottle,
+		DBDriver:      driver,
+		DSN:           dsn,
 	}
 }
 
@@ -65,4 +68,16 @@ func getenv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func getenvInt(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	var out int
+	if _, err := fmt.Sscanf(v, "%d", &out); err != nil || out <= 0 {
+		return def
+	}
+	return out
 }
