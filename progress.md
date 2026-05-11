@@ -13,10 +13,11 @@
   - distroless 기반 멀티스테이지 이미지: [Dockerfile](Dockerfile)
 - 최소 구동 스캐폴딩
   - 실행 엔트리포인트/서버 기동: [cmd/mcproxy/main.go](cmd/mcproxy/main.go)
-  - HTTP API 라우터 스켈레톤(/health, /api/v1/stats): [internal/api/router.go](internal/api/router.go)
-  - 환경설정 로더(ENV 기반): [internal/config/config.go](internal/config/config.go)
-  - 저장소 스토어 스켈레톤(DB 연결/기본 통계): [internal/store/store.go](internal/store/store.go)
-  - GeoLite2 연동 스켈레톤(파일 오픈/국가코드 조회 유틸): [internal/geo/geo.go](internal/geo/geo.go)
+  - HTTP API 라우터: [internal/api/router.go](internal/api/router.go)
+  - 환경설정 로더: [internal/config/config.go](internal/config/config.go)
+  - 저장소/정책 평가 엔진: [internal/store/store.go](internal/store/store.go)
+  - GeoLite2 연동: [internal/geo/geo.go](internal/geo/geo.go)
+  - 로깅: [internal/observability/logging.go](internal/observability/logging.go)
 
 ## 마일스톤 진행 현황
 
@@ -25,21 +26,19 @@
 - ent 코드 생성 및 마이그레이션 경로 확보: [internal/ent/client.go](internal/ent/client.go), [internal/ent/migrate/migrate.go](internal/ent/migrate/migrate.go)
 - 저장소에 ent 기반 스키마 생성/CRUD 반영: [internal/store/store.go](internal/store/store.go)
 - 관리 API 초안 구현: [internal/api/router.go](internal/api/router.go)
-  - 서버 API: ["/api/v1/servers"](internal/api/router.go:58), ["/api/v1/servers/{serverID}"](internal/api/router.go:84)
-  - 전역 정책 API: ["/api/v1/policy/global"](internal/api/router.go:127)
 
 ### M2 완료
 - 룰 관리 API 구현
-  - 룰 목록/생성/삭제: ["/api/v1/rules"](internal/api/router.go:148), ["/api/v1/rules/{ruleID}"](internal/api/router.go:173)
+  - 룰 목록/생성/삭제: ["/api/v1/rules"](internal/api/router.go:153), ["/api/v1/rules/{ruleID}"](internal/api/router.go:178)
 - 접속 평가 API 구현
-  - 정책/룰/카운터 기반 평가: ["/api/v1/evaluate"](internal/api/router.go:185)
+  - 정책/룰/카운터 기반 평가: ["/api/v1/evaluate"](internal/api/router.go:190)
 - 카운터 및 통계 확장
-  - 카운터 경로: [`bumpCounter()`](internal/store/store.go:771)
-  - 룰 매칭 및 임계값 평가: [`matchRules()`](internal/store/store.go:665), [`evaluateThresholds()`](internal/store/store.go:701)
-  - 통계 확장: [`Stats()`](internal/store/store.go:223)
+  - 카운터 경로: [`bumpCounter()`](internal/store/store.go:795)
+  - 룰 매칭 및 임계값 평가: [`matchRules()`](internal/store/store.go:689), [`evaluateThresholds()`](internal/store/store.go:725)
+  - 통계 확장: [`Stats()`](internal/store/store.go:235)
 
 ### M3 완료(초안)
-- Geo 정책을 접속 평가에 통합: [`evaluateGeoPolicy()`](internal/store/store.go:717)
+- Geo 정책을 접속 평가에 통합: [`evaluateGeoPolicy()`](internal/store/store.go:741)
 - Minekube Gate 런타임 추가: [internal/gate/runtime.go](internal/gate/runtime.go)
 - PreLogin 기반 접속 거부 로직 연결: [`event.Subscribe(...PreLoginEvent...)`](internal/gate/runtime.go:69)
 - Ping 기반 접속확인 로깅 연결: [`event.Subscribe(...PingEvent...)`](internal/gate/runtime.go:87)
@@ -48,13 +47,13 @@
 
 ### M4 완료
 - 관리 API 보안 강화
-  - 관리자 API 스로틀: [`middleware.ThrottleBacklog()`](internal/api/router.go:47)
-  - 요청 바디 제한: [`limitBody()`](internal/api/router.go:257)
-  - 보안 헤더: [`securityHeaders()`](internal/api/router.go:245)
+  - 관리자 API 스로틀: [`middleware.ThrottleBacklog()`](internal/api/router.go:48)
+  - 요청 바디 제한: [`limitBody()`](internal/api/router.go:248)
+  - 보안 헤더: [`securityHeaders()`](internal/api/router.go:238)
 - 구조화 로깅 추가
-  - JSON 로거: [`observability.LogJSON()`](internal/observability/logging.go:12)
-  - 요청 로그 미들웨어: [`observability.RequestLogger()`](internal/observability/logging.go:29)
-  - 시작 로그 추가: [cmd/mcproxy/main.go](cmd/mcproxy/main.go)
+  - JSON/TEXT + Loki fanout 로거: [internal/observability/logging.go](internal/observability/logging.go)
+  - 요청 로그 미들웨어: [`RequestLogger()`](internal/observability/logging.go:77)
+  - 애플리케이션 시작/오류 로깅: [cmd/mcproxy/main.go](cmd/mcproxy/main.go)
 - 코드리뷰 수행 및 결과 반영
 
 ### M5 완료(초안)
@@ -64,7 +63,7 @@
 
 ### M6 완료(초안)
 - 메모리 버킷 카운터: [`bucketCounter`](internal/store/counter_engine.go:9)
-- 데이터 플레인 카운트 read path DB 제거: [`bumpCounter()`](internal/store/store.go:771)
+- 데이터 플레인 카운트 read path DB 제거: [`bumpCounter()`](internal/store/store.go:795)
 
 ### M7 완료(초안)
 - Redis 분산 코디네이터: [`distributedCoordinator`](internal/store/distributed.go:11)
@@ -74,55 +73,107 @@
 ### M8 완료(초안)
 - 비동기 감사 이벤트 파이프라인: [`auditWriter`](internal/store/events.go:14)
 - 운영 예시 환경을 PostgreSQL/Redis/Gate 기준으로 확장: [inc.env](inc.env)
-- Gate/Redis/PostgreSQL 운영 옵션을 설정 로더에 반영: [`LoadFromEnv()`](internal/config/config.go:33)
+- SQLite foreign key 및 DSN 경로 처리 보강: [`sqliteDSN()`](internal/config/config.go:103), [`store.Open()`](internal/store/store.go:128)
+
+## 현재 남은 핵심 작업
+
+### 1) Gate 데이터 플레인 고도화
+- 현재 Gate 연동은 [`PreLoginEvent`](internal/gate/runtime.go:69), [`PingEvent`](internal/gate/runtime.go:87), 초기 서버 선택 중심이다.
+- 다음 작업:
+  - Login 이후 단계 차단/허용 로직 추가
+  - 서버 전환 이후(PostConnect 계열) 검증 로직 추가
+  - 접속 성공/실패에 대한 감사 로그 세분화
+  - 서버 동기화를 polling 기반에서 이벤트 기반 또는 더 정교한 방식으로 개선
+
+#### 현재 테스트 상태
+- [x] Gate 최소 통합 테스트 추가: [internal/gate/runtime_test.go](internal/gate/runtime_test.go)
+  - 빈 서버 목록일 때 초기화 실패 검증
+  - backend 서버 등록 후 [`syncServers()`](internal/gate/runtime.go:135), [`pickInitialServer()`](internal/gate/runtime.go:203) 검증
+
+### 2) 서버별 정책 API 구현
+- 현재 전역 정책 API는 있으나 서버별 Threshold API는 없다.
+- 다음 작업:
+  - [x] ["/api/v1/policy/servers/{id}"](internal/api/router.go) 조회/업서트 추가
+  - [ ] 서버별 정책 삭제/초기화 API 추가
+  - [ ] Gate 서버 선택 시 서버별 정책이 실제 적용되도록 연결 고도화
+
+### 3) Geo 정책 관리 API 구현
+- 평가 로직은 [`evaluateGeoPolicy()`](internal/store/store.go:741)에 있으나 관리 API는 부족하다.
+- 다음 작업:
+  - [x] Geo allow/deny 목록 전용 관리 엔드포인트 추가: ["/api/v1/policy/geo"](internal/api/router.go:180)
+  - [x] 서버별 Geo override 관리 추가: `server_id` query 기반 ["/api/v1/policy/geo"](internal/api/router.go:180)
+  - [ ] Geo 정책 삭제/초기화 API 추가
+
+### 4) 카운터 정밀도 고도화
+- 현재 [`bucketCounter`](internal/store/counter_engine.go:9)는 초안 수준 구현이다.
+- 다음 작업:
+  - 더 세밀한 슬라이딩 윈도우 구현
+  - 키 만료/정리 정책
+  - Redis 분산 카운터와 로컬 카운터의 일관성 전략 문서화
+
+### 5) 테스트 확충
+- 현재 빌드 검증 중심이며 테스트는 거의 없다.
+- 우선순위 높은 테스트:
+  - [x] [`matchRule()`](internal/store/store.go:708), [`matchRules()`](internal/store/store.go:689), [`evaluateThresholds()`](internal/store/store.go:725), [`evaluateGeoPolicy()`](internal/store/store.go:741), [`normalizeCountryCodes()`](internal/store/store.go:639) 단위 테스트 추가: [internal/store/store_test.go](internal/store/store_test.go)
+  - [ ] [`EvaluateAttempt()`](internal/store/store.go:420) 저장소/캐시/카운터 통합 단위 테스트
+  - [x] HTTP API 통합 테스트 추가: [internal/api/router_test.go](internal/api/router_test.go)
+  - [x] Gate 최소 통합 테스트 추가: [internal/gate/runtime_test.go](internal/gate/runtime_test.go)
+  - [ ] Gate 연동 E2E 테스트
+  - [ ] 테스트 헬퍼/fixture 공통화
+
+### 6) 운영형 배포 정리
+- [Dockerfile](Dockerfile)은 추가됐지만 실운영 배포 세트는 아직 없다.
+- 다음 작업:
+  - Docker Compose 또는 Kubernetes 매니페스트 초안
+  - PostgreSQL/Redis/Loki 포함 운영 스택 예시
+  - runbook 및 장애 대응 절차 문서화
+
+### 7) 관측성 확장
+- [`internal/observability/logging.go`](internal/observability/logging.go)은 정리됐지만 메트릭은 아직 없다.
+- 다음 작업:
+  - Prometheus 메트릭 익스포터
+  - 차단 사유별/서버별 지표 수집
+  - 알림 정책 및 보호 모드 자동 전환 설계
+
+### 8) 코드 구조 리팩토링
+- [`internal/store/store.go`](internal/store/store.go)에 책임이 집중되어 있다.
+- 분리 대상:
+  - 정책 저장소
+  - 평가 엔진
+  - 카운터 엔진
+  - 감사 이벤트 writer
+  - 분산 코디네이터
 
 ## 대규모 동시 접속 대응 강화 계획
 - 데이터 플레인 성능 최적화
   - 정책/룰/Geo 설정을 DB 직접 조회 대신 메모리 캐시로 유지하고, 관리 API 변경 시 무효화 또는 핫 리로드
-  - [`EvaluateAttempt()`](internal/store/store.go:396) 의 DB 의존도를 줄이고 read path를 lock-free 또는 low-lock 구조로 재설계
+  - [`EvaluateAttempt()`](internal/store/store.go:420)의 read path를 lock-free 또는 low-lock 구조로 재설계
   - 카운터를 슬라이딩 윈도우 버킷/ring buffer 구조로 지속 고도화
 - 분산 확장성
-  - 단일 인스턴스 카운터를 Redis 또는 샤딩된 인메모리 카운터로 확장해 다중 프록시 인스턴스 간 임계값 공유
-  - Gate 프록시를 여러 대로 수평 확장하고 L4 로드밸런서/Anycast 앞단 배치 검토
+  - Redis 또는 샤딩된 인메모리 카운터로 다중 프록시 인스턴스 간 임계값 공유
+  - Gate 프록시 수평 확장 및 L4 로드밸런서/Anycast 앞단 배치 검토
   - 서버별 정책/룰 캐시를 pub/sub 기반으로 동기화
 - 저장소 및 관리 Plane 분리
-  - SQLite는 개발/소규모용으로 두고, 대규모 운영은 PostgreSQL 기본 전환
-  - 관리 API와 데이터 플레인 읽기 경로를 분리해 운영 중 정책 변경이 접속 처리에 미치는 영향을 최소화
-  - 감사 로그/차단 이벤트는 비동기 큐로 넘겨 쓰기 지연을 줄임
+  - SQLite는 개발/소규모용, 대규모 운영은 PostgreSQL 기본
+  - 관리 API와 데이터 플레인 읽기 경로 분리
+  - 감사 로그/차단 이벤트 비동기 큐 처리
 - 네트워크/보안 계층 방어
-  - L4/L7 앞단에서 SYN flood, connection flood, per-IP conntrack 제한 적용
-  - 관리자 API는 별도 네트워크 또는 VPN 뒤로 분리하고 WAF/리버스 프록시 레이트 리밋 추가
-  - GeoIP 외에도 ASN/Hosting Provider 차단, reputation feed 연동 검토
+  - SYN flood, connection flood, per-IP conntrack 제한 적용
+  - 관리자 API는 별도 네트워크/VPN 뒤로 분리
+  - ASN/Hosting Provider 차단, reputation feed 연동 검토
 - 관측성 및 운영 자동화
-  - Prometheus 메트릭 추가: 활성 연결 수, 차단 사유별 카운트, 서버별 QPS, 정책 캐시 hit ratio, DB latency
-  - 경보 기준 정의: 특정 국가/ASN 급증, 서버별 임계값 초과율 상승, 인증 실패 급증
-  - 운영 중 임계값 자동 조정(Adaptive threshold) 또는 보호 모드 전환 기능 검토
+  - 활성 연결 수, 차단 사유별 카운트, 서버별 QPS, 정책 캐시 hit ratio, DB latency 메트릭 추가
+  - 경보 기준 정의 및 Adaptive threshold 검토
 - 안정성/복원력
-  - 장애 시 fail-open/fail-close 정책을 항목별로 선택 가능하게 설계
-  - GeoIP DB 갱신 실패, DB 지연, 캐시 미스 폭증에 대한 degraded mode 설계
-  - 롤링 배포 중 세션 영향 최소화를 위한 drain/shutdown 전략 정교화
+  - fail-open/fail-close 정책 선택
+  - degraded mode 설계
+  - drain/shutdown 전략 정교화
 
-## 다음 작업(진행 계획)
-1) Gate 데이터 플레인 고도화
-- Gate 이벤트별 정책 적용 확장(PreLogin 외 Login/InitialServer/PostConnect)
-- 서버 등록/해제 변경을 더 짧은 주기로 반영하거나 이벤트 기반으로 전환
-- 접속 성공/실패에 대한 richer telemetry 및 감사 로그 세분화
-
-2) 운영형 배포 정리
-- Docker Compose 또는 Kubernetes 매니페스트 초안(PostgreSQL/Redis/Gate/API)
-- distroless 이미지 기준 healthcheck/volume/env 정리
-- 운영용 runbook 및 장애 대응 문서화
-
-3) 관측성 확장
-- Prometheus 메트릭 익스포터 추가
-- 차단 사유별/서버별 지표 수집
-- 알림 정책 및 보호 모드 자동 전환 설계
-
-4) 테스트/품질
-- 단위 테스트(정책 평가, Geo, 카운터)
-- 통합 테스트(HTTP API, DB, Redis, Geo 파일)
-- E2E(기본 흐름: Gate 접속 허용/차단)
-- CI 설정(GitHub Actions 등): 빌드/테스트/린트/컨테이너 빌드 체크
+## 권장 다음 작업 순서
+1. 서버별 정책 API + Gate 데이터 플레인 적용
+2. Geo 관리 API + 핵심 테스트 작성
+3. Prometheus 메트릭 + 운영 배포 문서
+4. Store 책임 분리 리팩토링
 
 ## 단기 마일스톤(제안)
 - M1: ent 스키마(Servers/Policies/Rules/Counters/Audits)와 마이그레이션, /servers 및 /policy API 초안 완료 ✅
@@ -138,10 +189,11 @@
 
 ## 실행/환경 메모
 - 기본 DB: SQLite(파일 경로 data/mcproxy.db). PostgreSQL 사용 시 MCPROXY_DB_DRIVER=postgres 및 MCPROXY_POSTGRES_DSN 설정.
-- 운영 권장 기본값 예시는 [inc.env](inc.env) 에서 PostgreSQL/Redis/Gate 기준으로 확장.
+- 운영 권장 기본값 예시는 [inc.env](inc.env) 기준으로 조정.
 - GeoLite2-City.mmdb 경로 설정: MCPROXY_GEOIP_PATH
 - 관리 API 인증 토큰: MCPROXY_ADMIN_TOKEN (미설정 시 /api/v1 비활성화)
 - Redis 분산 동기화(선택): MCPROXY_REDIS_ADDR, MCPROXY_REDIS_CHANNEL
+- Loki 로깅(선택): MCPROXY_LOKI_HOST, MCPROXY_LOG_IDENTIFY
 - Minekube Gate 바인드 및 온라인 모드: MCPROXY_GATE_BIND, MCPROXY_GATE_ONLINE_MODE
 - HTTP API 바인드: MCPROXY_HTTP_ADDR(기본 127.0.0.1:8080)
 - 빌드/실행: `make build`, `make run` (사전 `make tools`로 ent 코드젠 설치 권장)

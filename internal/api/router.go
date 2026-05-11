@@ -147,6 +147,72 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 				}
 				writeJSON(w, http.StatusOK, item)
 			})
+			pr.Get("/servers/{serverID}", func(w http.ResponseWriter, r *http.Request) {
+				id, ok := pathInt(w, r, "serverID")
+				if !ok {
+					return
+				}
+				item, err := deps.Store.GetServerPolicy(r.Context(), id)
+				if handleStoreError(w, "get server policy", err) {
+					return
+				}
+				if item == nil {
+					writeJSON(w, http.StatusOK, map[string]any{"scope": "server", "server_id": id, "policy": nil, "inherited": true})
+					return
+				}
+				writeJSON(w, http.StatusOK, item)
+			})
+			pr.Put("/servers/{serverID}", func(w http.ResponseWriter, r *http.Request) {
+				id, ok := pathInt(w, r, "serverID")
+				if !ok {
+					return
+				}
+				var in store.PolicyInput
+				if err := decodeJSON(r, &in); err != nil {
+					writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+					return
+				}
+				item, err := deps.Store.UpsertServerPolicy(r.Context(), id, in)
+				if handleStoreError(w, "upsert server policy", err) {
+					return
+				}
+				writeJSON(w, http.StatusOK, item)
+			})
+			pr.Get("/geo", func(w http.ResponseWriter, r *http.Request) {
+				serverID, ok := optionalQueryInt(w, r, "server_id")
+				if !ok {
+					return
+				}
+				item, err := deps.Store.GetGeoPolicy(r.Context(), serverID)
+				if handleStoreError(w, "get geo policy", err) {
+					return
+				}
+				if item == nil {
+					writeJSON(w, http.StatusOK, map[string]any{"mode": "disabled", "countries": []string{}, "scope": "global"})
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]any{"mode": item.GeoMode, "countries": item.GeoList, "scope": item.Scope})
+			})
+			pr.Put("/geo", func(w http.ResponseWriter, r *http.Request) {
+				serverID, ok := optionalQueryInt(w, r, "server_id")
+				if !ok {
+					return
+				}
+				var in struct {
+					Mode      string   `json:"mode"`
+					Countries []string `json:"countries"`
+				}
+				if err := decodeJSON(r, &in); err != nil {
+					writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+					return
+				}
+				item, err := deps.Store.UpsertGeoPolicy(r.Context(), serverID, in.Mode, in.Countries)
+				if err != nil {
+					writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]any{"mode": item.GeoMode, "countries": item.GeoList, "scope": item.Scope})
+			})
 		})
 
 		api.Route("/rules", func(rr chi.Router) {

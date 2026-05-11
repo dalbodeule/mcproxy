@@ -187,6 +187,7 @@ func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 		db.SetMaxOpenConns(1)
 		db.SetMaxIdleConns(1)
 		// Apply pragmas on the single shared connection.
+		_, _ = db.ExecContext(ctx, `PRAGMA foreign_keys=ON;`)
 		_, _ = db.ExecContext(ctx, `PRAGMA journal_mode=WAL;`)
 		_, _ = db.ExecContext(ctx, `PRAGMA synchronous=NORMAL;`)
 		_, _ = db.ExecContext(ctx, `PRAGMA busy_timeout=5000;`)
@@ -366,6 +367,77 @@ func (s *Store) UpsertGlobalPolicy(ctx context.Context, in PolicyInput) (*Policy
 	s.cache.invalidate()
 	s.publishInvalidate(ctx)
 	return &dto, nil
+}
+
+func (s *Store) GetServerPolicy(ctx context.Context, serverID int) (*PolicyDTO, error) {
+	if _, err := s.client.Server.Get(ctx, serverID); err != nil {
+		return nil, err
+	}
+	p, err := s.client.AccessPolicy.Query().Where(accesspolicy.HasServerWith(server.IDEQ(serverID))).First(ctx)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	dto := policyDTO("server", p)
+	return &dto, nil
+}
+
+func (s *Store) UpsertServerPolicy(ctx context.Context, serverID int, in PolicyInput) (*PolicyDTO, error) {
+	if _, err := s.client.Server.Get(ctx, serverID); err != nil {
+		return nil, err
+	}
+	current, err := s.client.AccessPolicy.Query().Where(accesspolicy.HasServerWith(server.IDEQ(serverID))).First(ctx)
+	if err != nil && !ent.IsNotFound(err) {
+		return nil, err
+	}
+	if ent.IsNotFound(err) {
+		b := s.client.AccessPolicy.Create().SetServerID(serverID)
+		applyPolicyInputCreate(b, in)
+		n, cerr := b.Save(ctx)
+		if cerr != nil {
+			return nil, cerr
+		}
+		dto := policyDTO("server", n)
+		s.cache.invalidate()
+		s.publishInvalidate(ctx)
+		return &dto, nil
+	}
+	b := s.client.AccessPolicy.UpdateOneID(current.ID)
+	applyPolicyInputUpdate(b, in)
+	n, err := b.Save(ctx)
+	if err != nil {
+		return nil, err
+	}
+	dto := policyDTO("server", n)
+	s.cache.invalidate()
+	s.publishInvalidate(ctx)
+	return &dto, nil
+}
+
+func (s *Store) GetGeoPolicy(ctx context.Context, serverID *int) (*PolicyDTO, error) {
+	if serverID == nil {
+		return s.GetGlobalPolicy(ctx)
+	}
+	return s.GetServerPolicy(ctx, *serverID)
+}
+
+func (s *Store) UpsertGeoPolicy(ctx context.Context, serverID *int, mode string, countries []string) (*PolicyDTO, error) {
+	mode = strings.TrimSpace(strings.ToLower(mode))
+	switch mode {
+	case "disabled", "allow", "deny":
+	default:
+		return nil, fmt.Errorf("invalid geo mode")
+	}
+	in := PolicyInput{
+		GeoMode: &mode,
+		GeoList: normalizeCountryCodes(countries),
+	}
+	if serverID == nil {
+		return s.UpsertGlobalPolicy(ctx, in)
+	}
+	return s.UpsertServerPolicy(ctx, *serverID, in)
 }
 
 func (s *Store) ListRules(ctx context.Context, serverID *int) ([]RuleDTO, error) {
@@ -641,6 +713,23 @@ func validateRuleInput(in RuleInput) error {
 
 func normalizeNickname(v string) string {
 	return strings.ToLower(strings.TrimSpace(v))
+}
+
+func normalizeCountryCodes(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := make(map[string]struct{}, len(in))
+	for _, v := range in {
+		code := strings.ToUpper(strings.TrimSpace(v))
+		if len(code) != 2 {
+			continue
+		}
+		if _, ok := seen[code]; ok {
+			continue
+		}
+		seen[code] = struct{}{}
+		out = append(out, code)
+	}
+	return out
 }
 
 func (s *Store) getServerPolicy(ctx context.Context, serverID *int) (*PolicyDTO, error) {

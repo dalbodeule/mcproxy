@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,11 +45,11 @@ func LoadFromEnv() Config {
 	var dsn string
 	switch driver {
 	case "sqlite":
-		dsn = getenv("MCPROXY_SQLITE_PATH", filepath.Join("data", "mcproxy.db", "?_fk=1"))
+		dsn = sqliteDSN(getenv("MCPROXY_SQLITE_PATH", filepath.Join("data", "mcproxy.db")))
 	case "postgres":
 		dsn = getenv("MCPROXY_POSTGRES_DSN", "")
 	default:
-		dsn = filepath.Join("data", "mcproxy.db", "?_fk=1")
+		dsn = sqliteDSN(filepath.Join("data", "mcproxy.db"))
 		driver = "sqlite"
 	}
 
@@ -101,4 +102,25 @@ func getenvBool(key string, def bool) bool {
 	default:
 		return def
 	}
+}
+
+func sqliteDSN(path string) string {
+	if path == "" {
+		return "file:data/mcproxy.db?_pragma=foreign_keys(1)"
+	}
+	if strings.HasPrefix(path, "file:") {
+		if strings.Contains(path, "_pragma=foreign_keys(1)") {
+			return path
+		}
+		sep := "?"
+		if strings.Contains(path, "?") {
+			sep = "&"
+		}
+		return path + sep + "_pragma=foreign_keys(1)"
+	}
+	if strings.Contains(path, "?") {
+		parts := strings.SplitN(path, "?", 2)
+		return "file:" + url.PathEscape(parts[0]) + "?" + parts[1] + "&_pragma=foreign_keys(1)"
+	}
+	return "file:" + url.PathEscape(path) + "?_pragma=foreign_keys(1)"
 }
