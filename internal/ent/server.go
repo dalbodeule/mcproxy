@@ -19,8 +19,14 @@ type Server struct {
 	ID int `json:"id,omitempty"`
 	// Name holds the value of the "name" field.
 	Name string `json:"name,omitempty"`
+	// PublicHost holds the value of the "public_host" field.
+	PublicHost *string `json:"public_host,omitempty"`
+	// PublicAddr holds the value of the "public_addr" field.
+	PublicAddr *string `json:"public_addr,omitempty"`
 	// Upstream holds the value of the "upstream" field.
 	Upstream string `json:"upstream,omitempty"`
+	// Priority holds the value of the "priority" field.
+	Priority int `json:"priority,omitempty"`
 	// Enabled holds the value of the "enabled" field.
 	Enabled bool `json:"enabled,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
@@ -91,9 +97,9 @@ func (*Server) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case server.FieldEnabled:
 			values[i] = new(sql.NullBool)
-		case server.FieldID:
+		case server.FieldID, server.FieldPriority:
 			values[i] = new(sql.NullInt64)
-		case server.FieldName, server.FieldUpstream:
+		case server.FieldName, server.FieldPublicHost, server.FieldPublicAddr, server.FieldUpstream:
 			values[i] = new(sql.NullString)
 		case server.FieldCreatedAt, server.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -124,11 +130,31 @@ func (_m *Server) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.Name = value.String
 			}
+		case server.FieldPublicHost:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field public_host", values[i])
+			} else if value.Valid {
+				_m.PublicHost = new(string)
+				*_m.PublicHost = value.String
+			}
+		case server.FieldPublicAddr:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field public_addr", values[i])
+			} else if value.Valid {
+				_m.PublicAddr = new(string)
+				*_m.PublicAddr = value.String
+			}
 		case server.FieldUpstream:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field upstream", values[i])
 			} else if value.Valid {
 				_m.Upstream = value.String
+			}
+		case server.FieldPriority:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field priority", values[i])
+			} else if value.Valid {
+				_m.Priority = int(value.Int64)
 			}
 		case server.FieldEnabled:
 			if value, ok := values[i].(*sql.NullBool); !ok {
@@ -207,8 +233,21 @@ func (_m *Server) String() string {
 	builder.WriteString("name=")
 	builder.WriteString(_m.Name)
 	builder.WriteString(", ")
+	if v := _m.PublicHost; v != nil {
+		builder.WriteString("public_host=")
+		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
+	if v := _m.PublicAddr; v != nil {
+		builder.WriteString("public_addr=")
+		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
 	builder.WriteString("upstream=")
 	builder.WriteString(_m.Upstream)
+	builder.WriteString(", ")
+	builder.WriteString("priority=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Priority))
 	builder.WriteString(", ")
 	builder.WriteString("enabled=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Enabled))

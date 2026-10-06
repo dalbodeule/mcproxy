@@ -61,9 +61,24 @@ func Name(v string) predicate.Server {
 	return predicate.Server(sql.FieldEQ(FieldName, v))
 }
 
+// PublicHost applies equality check predicate on the "public_host" field. It's identical to PublicHostEQ.
+func PublicHost(v string) predicate.Server {
+	return predicate.Server(sql.FieldEQ(FieldPublicHost, v))
+}
+
+// PublicAddr applies equality check predicate on the "public_addr" field. It's identical to PublicAddrEQ.
+func PublicAddr(v string) predicate.Server {
+	return predicate.Server(sql.FieldEQ(FieldPublicAddr, v))
+}
+
 // Upstream applies equality check predicate on the "upstream" field. It's identical to UpstreamEQ.
 func Upstream(v string) predicate.Server {
 	return predicate.Server(sql.FieldEQ(FieldUpstream, v))
+}
+
+// Priority applies equality check predicate on the "priority" field. It's identical to PriorityEQ.
+func Priority(v int) predicate.Server {
+	return predicate.Server(sql.FieldEQ(FieldPriority, v))
 }
 
 // Enabled applies equality check predicate on the "enabled" field. It's identical to EnabledEQ.
@@ -146,6 +161,156 @@ func NameContainsFold(v string) predicate.Server {
 	return predicate.Server(sql.FieldContainsFold(FieldName, v))
 }
 
+// PublicHostEQ applies the EQ predicate on the "public_host" field.
+func PublicHostEQ(v string) predicate.Server {
+	return predicate.Server(sql.FieldEQ(FieldPublicHost, v))
+}
+
+// PublicHostNEQ applies the NEQ predicate on the "public_host" field.
+func PublicHostNEQ(v string) predicate.Server {
+	return predicate.Server(sql.FieldNEQ(FieldPublicHost, v))
+}
+
+// PublicHostIn applies the In predicate on the "public_host" field.
+func PublicHostIn(vs ...string) predicate.Server {
+	return predicate.Server(sql.FieldIn(FieldPublicHost, vs...))
+}
+
+// PublicHostNotIn applies the NotIn predicate on the "public_host" field.
+func PublicHostNotIn(vs ...string) predicate.Server {
+	return predicate.Server(sql.FieldNotIn(FieldPublicHost, vs...))
+}
+
+// PublicHostGT applies the GT predicate on the "public_host" field.
+func PublicHostGT(v string) predicate.Server {
+	return predicate.Server(sql.FieldGT(FieldPublicHost, v))
+}
+
+// PublicHostGTE applies the GTE predicate on the "public_host" field.
+func PublicHostGTE(v string) predicate.Server {
+	return predicate.Server(sql.FieldGTE(FieldPublicHost, v))
+}
+
+// PublicHostLT applies the LT predicate on the "public_host" field.
+func PublicHostLT(v string) predicate.Server {
+	return predicate.Server(sql.FieldLT(FieldPublicHost, v))
+}
+
+// PublicHostLTE applies the LTE predicate on the "public_host" field.
+func PublicHostLTE(v string) predicate.Server {
+	return predicate.Server(sql.FieldLTE(FieldPublicHost, v))
+}
+
+// PublicHostContains applies the Contains predicate on the "public_host" field.
+func PublicHostContains(v string) predicate.Server {
+	return predicate.Server(sql.FieldContains(FieldPublicHost, v))
+}
+
+// PublicHostHasPrefix applies the HasPrefix predicate on the "public_host" field.
+func PublicHostHasPrefix(v string) predicate.Server {
+	return predicate.Server(sql.FieldHasPrefix(FieldPublicHost, v))
+}
+
+// PublicHostHasSuffix applies the HasSuffix predicate on the "public_host" field.
+func PublicHostHasSuffix(v string) predicate.Server {
+	return predicate.Server(sql.FieldHasSuffix(FieldPublicHost, v))
+}
+
+// PublicHostIsNil applies the IsNil predicate on the "public_host" field.
+func PublicHostIsNil() predicate.Server {
+	return predicate.Server(sql.FieldIsNull(FieldPublicHost))
+}
+
+// PublicHostNotNil applies the NotNil predicate on the "public_host" field.
+func PublicHostNotNil() predicate.Server {
+	return predicate.Server(sql.FieldNotNull(FieldPublicHost))
+}
+
+// PublicHostEqualFold applies the EqualFold predicate on the "public_host" field.
+func PublicHostEqualFold(v string) predicate.Server {
+	return predicate.Server(sql.FieldEqualFold(FieldPublicHost, v))
+}
+
+// PublicHostContainsFold applies the ContainsFold predicate on the "public_host" field.
+func PublicHostContainsFold(v string) predicate.Server {
+	return predicate.Server(sql.FieldContainsFold(FieldPublicHost, v))
+}
+
+// PublicAddrEQ applies the EQ predicate on the "public_addr" field.
+func PublicAddrEQ(v string) predicate.Server {
+	return predicate.Server(sql.FieldEQ(FieldPublicAddr, v))
+}
+
+// PublicAddrNEQ applies the NEQ predicate on the "public_addr" field.
+func PublicAddrNEQ(v string) predicate.Server {
+	return predicate.Server(sql.FieldNEQ(FieldPublicAddr, v))
+}
+
+// PublicAddrIn applies the In predicate on the "public_addr" field.
+func PublicAddrIn(vs ...string) predicate.Server {
+	return predicate.Server(sql.FieldIn(FieldPublicAddr, vs...))
+}
+
+// PublicAddrNotIn applies the NotIn predicate on the "public_addr" field.
+func PublicAddrNotIn(vs ...string) predicate.Server {
+	return predicate.Server(sql.FieldNotIn(FieldPublicAddr, vs...))
+}
+
+// PublicAddrGT applies the GT predicate on the "public_addr" field.
+func PublicAddrGT(v string) predicate.Server {
+	return predicate.Server(sql.FieldGT(FieldPublicAddr, v))
+}
+
+// PublicAddrGTE applies the GTE predicate on the "public_addr" field.
+func PublicAddrGTE(v string) predicate.Server {
+	return predicate.Server(sql.FieldGTE(FieldPublicAddr, v))
+}
+
+// PublicAddrLT applies the LT predicate on the "public_addr" field.
+func PublicAddrLT(v string) predicate.Server {
+	return predicate.Server(sql.FieldLT(FieldPublicAddr, v))
+}
+
+// PublicAddrLTE applies the LTE predicate on the "public_addr" field.
+func PublicAddrLTE(v string) predicate.Server {
+	return predicate.Server(sql.FieldLTE(FieldPublicAddr, v))
+}
+
+// PublicAddrContains applies the Contains predicate on the "public_addr" field.
+func PublicAddrContains(v string) predicate.Server {
+	return predicate.Server(sql.FieldContains(FieldPublicAddr, v))
+}
+
+// PublicAddrHasPrefix applies the HasPrefix predicate on the "public_addr" field.
+func PublicAddrHasPrefix(v string) predicate.Server {
+	return predicate.Server(sql.FieldHasPrefix(FieldPublicAddr, v))
+}
+
+// PublicAddrHasSuffix applies the HasSuffix predicate on the "public_addr" field.
+func PublicAddrHasSuffix(v string) predicate.Server {
+	return predicate.Server(sql.FieldHasSuffix(FieldPublicAddr, v))
+}
+
+// PublicAddrIsNil applies the IsNil predicate on the "public_addr" field.
+func PublicAddrIsNil() predicate.Server {
+	return predicate.Server(sql.FieldIsNull(FieldPublicAddr))
+}
+
+// PublicAddrNotNil applies the NotNil predicate on the "public_addr" field.
+func PublicAddrNotNil() predicate.Server {
+	return predicate.Server(sql.FieldNotNull(FieldPublicAddr))
+}
+
+// PublicAddrEqualFold applies the EqualFold predicate on the "public_addr" field.
+func PublicAddrEqualFold(v string) predicate.Server {
+	return predicate.Server(sql.FieldEqualFold(FieldPublicAddr, v))
+}
+
+// PublicAddrContainsFold applies the ContainsFold predicate on the "public_addr" field.
+func PublicAddrContainsFold(v string) predicate.Server {
+	return predicate.Server(sql.FieldContainsFold(FieldPublicAddr, v))
+}
+
 // UpstreamEQ applies the EQ predicate on the "upstream" field.
 func UpstreamEQ(v string) predicate.Server {
 	return predicate.Server(sql.FieldEQ(FieldUpstream, v))
@@ -209,6 +374,46 @@ func UpstreamEqualFold(v string) predicate.Server {
 // UpstreamContainsFold applies the ContainsFold predicate on the "upstream" field.
 func UpstreamContainsFold(v string) predicate.Server {
 	return predicate.Server(sql.FieldContainsFold(FieldUpstream, v))
+}
+
+// PriorityEQ applies the EQ predicate on the "priority" field.
+func PriorityEQ(v int) predicate.Server {
+	return predicate.Server(sql.FieldEQ(FieldPriority, v))
+}
+
+// PriorityNEQ applies the NEQ predicate on the "priority" field.
+func PriorityNEQ(v int) predicate.Server {
+	return predicate.Server(sql.FieldNEQ(FieldPriority, v))
+}
+
+// PriorityIn applies the In predicate on the "priority" field.
+func PriorityIn(vs ...int) predicate.Server {
+	return predicate.Server(sql.FieldIn(FieldPriority, vs...))
+}
+
+// PriorityNotIn applies the NotIn predicate on the "priority" field.
+func PriorityNotIn(vs ...int) predicate.Server {
+	return predicate.Server(sql.FieldNotIn(FieldPriority, vs...))
+}
+
+// PriorityGT applies the GT predicate on the "priority" field.
+func PriorityGT(v int) predicate.Server {
+	return predicate.Server(sql.FieldGT(FieldPriority, v))
+}
+
+// PriorityGTE applies the GTE predicate on the "priority" field.
+func PriorityGTE(v int) predicate.Server {
+	return predicate.Server(sql.FieldGTE(FieldPriority, v))
+}
+
+// PriorityLT applies the LT predicate on the "priority" field.
+func PriorityLT(v int) predicate.Server {
+	return predicate.Server(sql.FieldLT(FieldPriority, v))
+}
+
+// PriorityLTE applies the LTE predicate on the "priority" field.
+func PriorityLTE(v int) predicate.Server {
+	return predicate.Server(sql.FieldLTE(FieldPriority, v))
 }
 
 // EnabledEQ applies the EQ predicate on the "enabled" field.

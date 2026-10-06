@@ -3289,7 +3289,11 @@ type ServerMutation struct {
 	typ             string
 	id              *int
 	name            *string
+	public_host     *string
+	public_addr     *string
 	upstream        *string
+	priority        *int
+	addpriority     *int
 	enabled         *bool
 	created_at      *time.Time
 	updated_at      *time.Time
@@ -3445,6 +3449,104 @@ func (m *ServerMutation) ResetName() {
 	m.name = nil
 }
 
+// SetPublicHost sets the "public_host" field.
+func (m *ServerMutation) SetPublicHost(s string) {
+	m.public_host = &s
+}
+
+// PublicHost returns the value of the "public_host" field in the mutation.
+func (m *ServerMutation) PublicHost() (r string, exists bool) {
+	v := m.public_host
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPublicHost returns the old "public_host" field's value of the Server entity.
+// If the Server object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ServerMutation) OldPublicHost(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPublicHost is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPublicHost requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPublicHost: %w", err)
+	}
+	return oldValue.PublicHost, nil
+}
+
+// ClearPublicHost clears the value of the "public_host" field.
+func (m *ServerMutation) ClearPublicHost() {
+	m.public_host = nil
+	m.clearedFields[server.FieldPublicHost] = struct{}{}
+}
+
+// PublicHostCleared returns if the "public_host" field was cleared in this mutation.
+func (m *ServerMutation) PublicHostCleared() bool {
+	_, ok := m.clearedFields[server.FieldPublicHost]
+	return ok
+}
+
+// ResetPublicHost resets all changes to the "public_host" field.
+func (m *ServerMutation) ResetPublicHost() {
+	m.public_host = nil
+	delete(m.clearedFields, server.FieldPublicHost)
+}
+
+// SetPublicAddr sets the "public_addr" field.
+func (m *ServerMutation) SetPublicAddr(s string) {
+	m.public_addr = &s
+}
+
+// PublicAddr returns the value of the "public_addr" field in the mutation.
+func (m *ServerMutation) PublicAddr() (r string, exists bool) {
+	v := m.public_addr
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPublicAddr returns the old "public_addr" field's value of the Server entity.
+// If the Server object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ServerMutation) OldPublicAddr(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPublicAddr is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPublicAddr requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPublicAddr: %w", err)
+	}
+	return oldValue.PublicAddr, nil
+}
+
+// ClearPublicAddr clears the value of the "public_addr" field.
+func (m *ServerMutation) ClearPublicAddr() {
+	m.public_addr = nil
+	m.clearedFields[server.FieldPublicAddr] = struct{}{}
+}
+
+// PublicAddrCleared returns if the "public_addr" field was cleared in this mutation.
+func (m *ServerMutation) PublicAddrCleared() bool {
+	_, ok := m.clearedFields[server.FieldPublicAddr]
+	return ok
+}
+
+// ResetPublicAddr resets all changes to the "public_addr" field.
+func (m *ServerMutation) ResetPublicAddr() {
+	m.public_addr = nil
+	delete(m.clearedFields, server.FieldPublicAddr)
+}
+
 // SetUpstream sets the "upstream" field.
 func (m *ServerMutation) SetUpstream(s string) {
 	m.upstream = &s
@@ -3479,6 +3581,62 @@ func (m *ServerMutation) OldUpstream(ctx context.Context) (v string, err error) 
 // ResetUpstream resets all changes to the "upstream" field.
 func (m *ServerMutation) ResetUpstream() {
 	m.upstream = nil
+}
+
+// SetPriority sets the "priority" field.
+func (m *ServerMutation) SetPriority(i int) {
+	m.priority = &i
+	m.addpriority = nil
+}
+
+// Priority returns the value of the "priority" field in the mutation.
+func (m *ServerMutation) Priority() (r int, exists bool) {
+	v := m.priority
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPriority returns the old "priority" field's value of the Server entity.
+// If the Server object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ServerMutation) OldPriority(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPriority is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPriority requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPriority: %w", err)
+	}
+	return oldValue.Priority, nil
+}
+
+// AddPriority adds i to the "priority" field.
+func (m *ServerMutation) AddPriority(i int) {
+	if m.addpriority != nil {
+		*m.addpriority += i
+	} else {
+		m.addpriority = &i
+	}
+}
+
+// AddedPriority returns the value that was added to the "priority" field in this mutation.
+func (m *ServerMutation) AddedPriority() (r int, exists bool) {
+	v := m.addpriority
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetPriority resets all changes to the "priority" field.
+func (m *ServerMutation) ResetPriority() {
+	m.priority = nil
+	m.addpriority = nil
 }
 
 // SetEnabled sets the "enabled" field.
@@ -3839,12 +3997,21 @@ func (m *ServerMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ServerMutation) Fields() []string {
-	fields := make([]string, 0, 5)
+	fields := make([]string, 0, 8)
 	if m.name != nil {
 		fields = append(fields, server.FieldName)
 	}
+	if m.public_host != nil {
+		fields = append(fields, server.FieldPublicHost)
+	}
+	if m.public_addr != nil {
+		fields = append(fields, server.FieldPublicAddr)
+	}
 	if m.upstream != nil {
 		fields = append(fields, server.FieldUpstream)
+	}
+	if m.priority != nil {
+		fields = append(fields, server.FieldPriority)
 	}
 	if m.enabled != nil {
 		fields = append(fields, server.FieldEnabled)
@@ -3865,8 +4032,14 @@ func (m *ServerMutation) Field(name string) (ent.Value, bool) {
 	switch name {
 	case server.FieldName:
 		return m.Name()
+	case server.FieldPublicHost:
+		return m.PublicHost()
+	case server.FieldPublicAddr:
+		return m.PublicAddr()
 	case server.FieldUpstream:
 		return m.Upstream()
+	case server.FieldPriority:
+		return m.Priority()
 	case server.FieldEnabled:
 		return m.Enabled()
 	case server.FieldCreatedAt:
@@ -3884,8 +4057,14 @@ func (m *ServerMutation) OldField(ctx context.Context, name string) (ent.Value, 
 	switch name {
 	case server.FieldName:
 		return m.OldName(ctx)
+	case server.FieldPublicHost:
+		return m.OldPublicHost(ctx)
+	case server.FieldPublicAddr:
+		return m.OldPublicAddr(ctx)
 	case server.FieldUpstream:
 		return m.OldUpstream(ctx)
+	case server.FieldPriority:
+		return m.OldPriority(ctx)
 	case server.FieldEnabled:
 		return m.OldEnabled(ctx)
 	case server.FieldCreatedAt:
@@ -3908,12 +4087,33 @@ func (m *ServerMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetName(v)
 		return nil
+	case server.FieldPublicHost:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPublicHost(v)
+		return nil
+	case server.FieldPublicAddr:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPublicAddr(v)
+		return nil
 	case server.FieldUpstream:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetUpstream(v)
+		return nil
+	case server.FieldPriority:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPriority(v)
 		return nil
 	case server.FieldEnabled:
 		v, ok := value.(bool)
@@ -3943,13 +4143,21 @@ func (m *ServerMutation) SetField(name string, value ent.Value) error {
 // AddedFields returns all numeric fields that were incremented/decremented during
 // this mutation.
 func (m *ServerMutation) AddedFields() []string {
-	return nil
+	var fields []string
+	if m.addpriority != nil {
+		fields = append(fields, server.FieldPriority)
+	}
+	return fields
 }
 
 // AddedField returns the numeric value that was incremented/decremented on a field
 // with the given name. The second boolean return value indicates that this field
 // was not set, or was not defined in the schema.
 func (m *ServerMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case server.FieldPriority:
+		return m.AddedPriority()
+	}
 	return nil, false
 }
 
@@ -3958,6 +4166,13 @@ func (m *ServerMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *ServerMutation) AddField(name string, value ent.Value) error {
 	switch name {
+	case server.FieldPriority:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddPriority(v)
+		return nil
 	}
 	return fmt.Errorf("unknown Server numeric field %s", name)
 }
@@ -3965,7 +4180,14 @@ func (m *ServerMutation) AddField(name string, value ent.Value) error {
 // ClearedFields returns all nullable fields that were cleared during this
 // mutation.
 func (m *ServerMutation) ClearedFields() []string {
-	return nil
+	var fields []string
+	if m.FieldCleared(server.FieldPublicHost) {
+		fields = append(fields, server.FieldPublicHost)
+	}
+	if m.FieldCleared(server.FieldPublicAddr) {
+		fields = append(fields, server.FieldPublicAddr)
+	}
+	return fields
 }
 
 // FieldCleared returns a boolean indicating if a field with the given name was
@@ -3978,6 +4200,14 @@ func (m *ServerMutation) FieldCleared(name string) bool {
 // ClearField clears the value of the field with the given name. It returns an
 // error if the field is not defined in the schema.
 func (m *ServerMutation) ClearField(name string) error {
+	switch name {
+	case server.FieldPublicHost:
+		m.ClearPublicHost()
+		return nil
+	case server.FieldPublicAddr:
+		m.ClearPublicAddr()
+		return nil
+	}
 	return fmt.Errorf("unknown Server nullable field %s", name)
 }
 
@@ -3988,8 +4218,17 @@ func (m *ServerMutation) ResetField(name string) error {
 	case server.FieldName:
 		m.ResetName()
 		return nil
+	case server.FieldPublicHost:
+		m.ResetPublicHost()
+		return nil
+	case server.FieldPublicAddr:
+		m.ResetPublicAddr()
+		return nil
 	case server.FieldUpstream:
 		m.ResetUpstream()
+		return nil
+	case server.FieldPriority:
+		m.ResetPriority()
 		return nil
 	case server.FieldEnabled:
 		m.ResetEnabled()

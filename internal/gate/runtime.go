@@ -11,25 +11,44 @@ import (
 	"github.com/robinbraemer/event"
 	"go.minekube.com/common/minecraft/component"
 	gatecfg "go.minekube.com/gate/pkg/edition/java/config"
+	"go.minekube.com/gate/pkg/edition/java/ping"
 	javaproxy "go.minekube.com/gate/pkg/edition/java/proxy"
+	"go.minekube.com/gate/pkg/util/favicon"
 
+	"mcproxy/internal/config"
 	"mcproxy/internal/observability"
 	"mcproxy/internal/store"
 )
 
 type Runtime struct {
-	mu        sync.RWMutex
-	proxy     *javaproxy.Proxy
-	bind      string
-	store     *store.Store
-	tryOrder  []string
-	syncEvery time.Duration
+	mu           sync.RWMutex
+	proxy        *javaproxy.Proxy
+	bind         string
+	store        *store.Store
+	tryOrder     []string
+	routes       map[string]string
+	syncEvery    time.Duration
+	pingCacheTTL time.Duration
+	pingFallback pingFallback
+	pingCache    map[string]cachedPing
+}
+
+type pingFallback struct {
+	motd        string
+	offlineMotd string
+	favicon     string
+}
+
+type cachedPing struct {
+	payload   *ping.ServerPing
+	expiresAt time.Time
 }
 
 type Options struct {
 	Bind       string
 	OnlineMode bool
 	Store      *store.Store
+	Config     config.Config
 }
 
 func New(ctx context.Context, opts Options) (*Runtime, error) {
@@ -47,6 +66,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	cfg := gatecfg.DefaultConfig
 	cfg.Bind = opts.Bind
 	cfg.OnlineMode = opts.OnlineMode
+	cfg.Forwarding.Mode = gatecfg.NoneForwardingMode
 	cfg.Servers = map[string]string{}
 	cfg.Try = make([]string, 0, len(servers))
 	for _, s := range servers {
@@ -60,12 +80,23 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		return nil, fmt.Errorf("no enabled backend servers registered")
 	}
 
-	p, err := javaproxy.New(javaproxy.Options{Config: &cfg})
+	eventMgr := event.New()
+	p, err := javaproxy.New(javaproxy.Options{Config: &cfg, EventMgr: eventMgr})
 	if err != nil {
 		return nil, err
 	}
 
-	r := &Runtime{proxy: p, bind: opts.Bind, store: opts.Store, syncEvery: 5 * time.Second, tryOrder: append([]string(nil), cfg.Try...)}
+	r := &Runtime{
+		proxy:        p,
+		bind:         opts.Bind,
+		store:        opts.Store,
+		syncEvery:    5 * time.Second,
+		tryOrder:     append([]string(nil), cfg.Try...),
+		routes:       make(map[string]string),
+		pingCacheTTL: time.Duration(opts.Config.PingCacheTTL) * time.Second,
+		pingFallback: pingFallback{motd: opts.Config.PingFallbackMotd, offlineMotd: opts.Config.PingOfflineMotd, favicon: opts.Config.PingFallbackFavicon},
+		pingCache:    make(map[string]cachedPing),
+	}
 	event.Subscribe(p.Event(), 0, func(e *javaproxy.PreLoginEvent) {
 		remoteIP := netIPString(e.Conn().RemoteAddr())
 		res, err := opts.Store.EvaluateAttempt(context.Background(), store.EvaluateAttemptInput{
@@ -85,16 +116,73 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	})
 
 	event.Subscribe(p.Event(), 0, func(e *javaproxy.PingEvent) {
-		observability.Info("gate_ping", "remote_ip", netIPString(e.Connection().RemoteAddr()))
+		host := hostnameFromAddr(e.Connection().VirtualHost())
+		observability.Info("gate_ping", "remote_ip", netIPString(e.Connection().RemoteAddr()), "host", host)
+		e.SetPing(r.resolvePing(host))
 	})
 
 	event.Subscribe(p.Event(), 0, func(e *javaproxy.PlayerChooseInitialServerEvent) {
-		if initial := r.pickInitialServer(); initial != nil {
+		host := hostnameFromAddr(e.Player().VirtualHost())
+		if initial := r.pickInitialServer(host); initial != nil {
+			observability.Info("gate_initial_server_selected", "host", host, "selected_server", initial.ServerInfo().Name(), "selected_upstream", initial.ServerInfo().Addr().String())
 			e.SetInitialServer(initial)
+		} else {
+			observability.Warn("gate_initial_server_missing", "host", host)
 		}
 	})
 
 	return r, nil
+}
+
+func (r *Runtime) resolvePing(host string) *ping.ServerPing {
+	r.mu.RLock()
+	if cached, ok := r.pingCache[host]; ok && time.Now().Before(cached.expiresAt) {
+		payload := *cached.payload
+		r.mu.RUnlock()
+		return &payload
+	}
+	r.mu.RUnlock()
+	existing := r.pickInitialServer(host)
+
+	payload := r.fallbackPing(existing != nil)
+	if existing != nil {
+		observability.Info("gate_ping_host_matched", "host", host, "selected_server", existing.ServerInfo().Name(), "selected_upstream", existing.ServerInfo().Addr().String())
+		r.mu.Lock()
+		r.pingCache[host] = cachedPing{payload: payload, expiresAt: time.Now().Add(r.pingCacheTTL)}
+		r.mu.Unlock()
+	} else {
+		observability.Warn("gate_ping_host_unmatched", "host", host)
+	}
+	return payload
+}
+
+func (r *Runtime) fallbackPing(exists bool) *ping.ServerPing {
+	description := r.pingFallback.motd
+	players := &ping.Players{Online: 0, Max: 0}
+	if !exists {
+		description = r.pingFallback.offlineMotd
+		players = &ping.Players{Online: 0, Max: 0, Sample: []ping.SamplePlayer{{Name: "UNAVAILABLE", ID: [16]byte{}}}}
+	}
+	sp := &ping.ServerPing{
+		Description: &component.Text{Content: description},
+		Players:     players,
+		Version:     ping.Version{Name: "mcproxy", Protocol: 0},
+	}
+	if r.pingFallback.favicon != "" {
+		sp.Favicon = favicon.Favicon(r.pingFallback.favicon)
+	}
+	return sp
+}
+
+func hostnameFromAddr(addr net.Addr) string {
+	if addr == nil {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(addr.String())
+	if err == nil {
+		return strings.ToLower(strings.TrimSpace(host))
+	}
+	return strings.ToLower(strings.TrimSpace(addr.String()))
 }
 
 func (r *Runtime) Start(ctx context.Context) error {
@@ -148,6 +236,7 @@ func (r *Runtime) syncServers(ctx context.Context) error {
 
 	desired := make(map[string]string, len(servers))
 	tryOrder := make([]string, 0, len(servers))
+	routes := make(map[string]string, len(servers))
 	for _, s := range servers {
 		if !s.Enabled {
 			continue
@@ -159,6 +248,10 @@ func (r *Runtime) syncServers(ctx context.Context) error {
 		}
 		desired[strings.ToLower(name)] = upstream
 		tryOrder = append(tryOrder, name)
+		host := strings.ToLower(strings.TrimSpace(s.PublicHost))
+		if host != "" {
+			routes[host] = name
+		}
 	}
 	if len(tryOrder) == 0 {
 		return fmt.Errorf("no enabled backend servers registered")
@@ -196,25 +289,41 @@ func (r *Runtime) syncServers(ctx context.Context) error {
 
 	r.mu.Lock()
 	r.tryOrder = tryOrder
+	r.routes = routes
+	r.pingCache = make(map[string]cachedPing)
 	r.mu.Unlock()
+	observability.Info("gate_routes_synced", "route_count", len(routes), "try_order_count", len(tryOrder))
 	return nil
 }
 
-func (r *Runtime) pickInitialServer() javaproxy.RegisteredServer {
+func (r *Runtime) pickInitialServer(host string) javaproxy.RegisteredServer {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if r.proxy == nil {
+		observability.Warn("gate_pick_server_proxy_nil", "host", host)
 		return nil
+	}
+	if target, ok := r.routes[strings.ToLower(strings.TrimSpace(host))]; ok {
+		if server := r.proxy.Server(target); server != nil {
+			observability.Info("gate_pick_server_route_hit", "host", host, "target", target, "upstream", server.ServerInfo().Addr().String())
+			return server
+		}
+		observability.Warn("gate_pick_server_route_target_missing", "host", host, "target", target)
+	} else {
+		observability.Warn("gate_pick_server_route_miss", "host", host)
 	}
 	for _, name := range r.tryOrder {
 		if server := r.proxy.Server(name); server != nil {
+			observability.Warn("gate_pick_server_fallback_try_order", "host", host, "fallback_server", name, "upstream", server.ServerInfo().Addr().String())
 			return server
 		}
 	}
 	servers := r.proxy.Servers()
 	if len(servers) == 0 {
+		observability.Error("gate_pick_server_no_registered_servers", "host", host)
 		return nil
 	}
+	observability.Warn("gate_pick_server_fallback_first", "host", host, "fallback_server", servers[0].ServerInfo().Name(), "upstream", servers[0].ServerInfo().Addr().String())
 	return servers[0]
 }
 

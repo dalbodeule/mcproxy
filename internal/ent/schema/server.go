@@ -14,7 +14,10 @@ type Server struct{ ent.Schema }
 func (Server) Fields() []ent.Field {
 	return []ent.Field{
 		field.String("name").Unique().NotEmpty(),
+		field.String("public_host").Optional().Nillable(),
+		field.String("public_addr").Optional().Nillable(),
 		field.String("upstream").NotEmpty(), // host:port or address used by Gate to route
+		field.Int("priority").Default(100),
 		field.Bool("enabled").Default(true),
 		field.Time("created_at").Default(time.Now),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),

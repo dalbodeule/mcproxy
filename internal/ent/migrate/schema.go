@@ -117,7 +117,10 @@ var (
 	ServersColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
 		{Name: "name", Type: field.TypeString, Unique: true},
+		{Name: "public_host", Type: field.TypeString, Nullable: true},
+		{Name: "public_addr", Type: field.TypeString, Nullable: true},
 		{Name: "upstream", Type: field.TypeString},
+		{Name: "priority", Type: field.TypeInt, Default: 100},
 		{Name: "enabled", Type: field.TypeBool, Default: true},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "updated_at", Type: field.TypeTime},

@@ -47,6 +47,46 @@ func (_u *ServerUpdate) SetNillableName(v *string) *ServerUpdate {
 	return _u
 }
 
+// SetPublicHost sets the "public_host" field.
+func (_u *ServerUpdate) SetPublicHost(v string) *ServerUpdate {
+	_u.mutation.SetPublicHost(v)
+	return _u
+}
+
+// SetNillablePublicHost sets the "public_host" field if the given value is not nil.
+func (_u *ServerUpdate) SetNillablePublicHost(v *string) *ServerUpdate {
+	if v != nil {
+		_u.SetPublicHost(*v)
+	}
+	return _u
+}
+
+// ClearPublicHost clears the value of the "public_host" field.
+func (_u *ServerUpdate) ClearPublicHost() *ServerUpdate {
+	_u.mutation.ClearPublicHost()
+	return _u
+}
+
+// SetPublicAddr sets the "public_addr" field.
+func (_u *ServerUpdate) SetPublicAddr(v string) *ServerUpdate {
+	_u.mutation.SetPublicAddr(v)
+	return _u
+}
+
+// SetNillablePublicAddr sets the "public_addr" field if the given value is not nil.
+func (_u *ServerUpdate) SetNillablePublicAddr(v *string) *ServerUpdate {
+	if v != nil {
+		_u.SetPublicAddr(*v)
+	}
+	return _u
+}
+
+// ClearPublicAddr clears the value of the "public_addr" field.
+func (_u *ServerUpdate) ClearPublicAddr() *ServerUpdate {
+	_u.mutation.ClearPublicAddr()
+	return _u
+}
+
 // SetUpstream sets the "upstream" field.
 func (_u *ServerUpdate) SetUpstream(v string) *ServerUpdate {
 	_u.mutation.SetUpstream(v)
@@ -58,6 +98,27 @@ func (_u *ServerUpdate) SetNillableUpstream(v *string) *ServerUpdate {
 	if v != nil {
 		_u.SetUpstream(*v)
 	}
+	return _u
+}
+
+// SetPriority sets the "priority" field.
+func (_u *ServerUpdate) SetPriority(v int) *ServerUpdate {
+	_u.mutation.ResetPriority()
+	_u.mutation.SetPriority(v)
+	return _u
+}
+
+// SetNillablePriority sets the "priority" field if the given value is not nil.
+func (_u *ServerUpdate) SetNillablePriority(v *int) *ServerUpdate {
+	if v != nil {
+		_u.SetPriority(*v)
+	}
+	return _u
+}
+
+// AddPriority adds value to the "priority" field.
+func (_u *ServerUpdate) AddPriority(v int) *ServerUpdate {
+	_u.mutation.AddPriority(v)
 	return _u
 }
 
@@ -310,8 +371,26 @@ func (_u *ServerUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(server.FieldName, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.PublicHost(); ok {
+		_spec.SetField(server.FieldPublicHost, field.TypeString, value)
+	}
+	if _u.mutation.PublicHostCleared() {
+		_spec.ClearField(server.FieldPublicHost, field.TypeString)
+	}
+	if value, ok := _u.mutation.PublicAddr(); ok {
+		_spec.SetField(server.FieldPublicAddr, field.TypeString, value)
+	}
+	if _u.mutation.PublicAddrCleared() {
+		_spec.ClearField(server.FieldPublicAddr, field.TypeString)
+	}
 	if value, ok := _u.mutation.Upstream(); ok {
 		_spec.SetField(server.FieldUpstream, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.Priority(); ok {
+		_spec.SetField(server.FieldPriority, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedPriority(); ok {
+		_spec.AddField(server.FieldPriority, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.Enabled(); ok {
 		_spec.SetField(server.FieldEnabled, field.TypeBool, value)
@@ -550,6 +629,46 @@ func (_u *ServerUpdateOne) SetNillableName(v *string) *ServerUpdateOne {
 	return _u
 }
 
+// SetPublicHost sets the "public_host" field.
+func (_u *ServerUpdateOne) SetPublicHost(v string) *ServerUpdateOne {
+	_u.mutation.SetPublicHost(v)
+	return _u
+}
+
+// SetNillablePublicHost sets the "public_host" field if the given value is not nil.
+func (_u *ServerUpdateOne) SetNillablePublicHost(v *string) *ServerUpdateOne {
+	if v != nil {
+		_u.SetPublicHost(*v)
+	}
+	return _u
+}
+
+// ClearPublicHost clears the value of the "public_host" field.
+func (_u *ServerUpdateOne) ClearPublicHost() *ServerUpdateOne {
+	_u.mutation.ClearPublicHost()
+	return _u
+}
+
+// SetPublicAddr sets the "public_addr" field.
+func (_u *ServerUpdateOne) SetPublicAddr(v string) *ServerUpdateOne {
+	_u.mutation.SetPublicAddr(v)
+	return _u
+}
+
+// SetNillablePublicAddr sets the "public_addr" field if the given value is not nil.
+func (_u *ServerUpdateOne) SetNillablePublicAddr(v *string) *ServerUpdateOne {
+	if v != nil {
+		_u.SetPublicAddr(*v)
+	}
+	return _u
+}
+
+// ClearPublicAddr clears the value of the "public_addr" field.
+func (_u *ServerUpdateOne) ClearPublicAddr() *ServerUpdateOne {
+	_u.mutation.ClearPublicAddr()
+	return _u
+}
+
 // SetUpstream sets the "upstream" field.
 func (_u *ServerUpdateOne) SetUpstream(v string) *ServerUpdateOne {
 	_u.mutation.SetUpstream(v)
@@ -561,6 +680,27 @@ func (_u *ServerUpdateOne) SetNillableUpstream(v *string) *ServerUpdateOne {
 	if v != nil {
 		_u.SetUpstream(*v)
 	}
+	return _u
+}
+
+// SetPriority sets the "priority" field.
+func (_u *ServerUpdateOne) SetPriority(v int) *ServerUpdateOne {
+	_u.mutation.ResetPriority()
+	_u.mutation.SetPriority(v)
+	return _u
+}
+
+// SetNillablePriority sets the "priority" field if the given value is not nil.
+func (_u *ServerUpdateOne) SetNillablePriority(v *int) *ServerUpdateOne {
+	if v != nil {
+		_u.SetPriority(*v)
+	}
+	return _u
+}
+
+// AddPriority adds value to the "priority" field.
+func (_u *ServerUpdateOne) AddPriority(v int) *ServerUpdateOne {
+	_u.mutation.AddPriority(v)
 	return _u
 }
 
@@ -843,8 +983,26 @@ func (_u *ServerUpdateOne) sqlSave(ctx context.Context) (_node *Server, err erro
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(server.FieldName, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.PublicHost(); ok {
+		_spec.SetField(server.FieldPublicHost, field.TypeString, value)
+	}
+	if _u.mutation.PublicHostCleared() {
+		_spec.ClearField(server.FieldPublicHost, field.TypeString)
+	}
+	if value, ok := _u.mutation.PublicAddr(); ok {
+		_spec.SetField(server.FieldPublicAddr, field.TypeString, value)
+	}
+	if _u.mutation.PublicAddrCleared() {
+		_spec.ClearField(server.FieldPublicAddr, field.TypeString)
+	}
 	if value, ok := _u.mutation.Upstream(); ok {
 		_spec.SetField(server.FieldUpstream, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.Priority(); ok {
+		_spec.SetField(server.FieldPriority, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedPriority(); ok {
+		_spec.AddField(server.FieldPriority, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.Enabled(); ok {
 		_spec.SetField(server.FieldEnabled, field.TypeBool, value)

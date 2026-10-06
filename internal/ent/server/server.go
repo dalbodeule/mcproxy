@@ -16,8 +16,14 @@ const (
 	FieldID = "id"
 	// FieldName holds the string denoting the name field in the database.
 	FieldName = "name"
+	// FieldPublicHost holds the string denoting the public_host field in the database.
+	FieldPublicHost = "public_host"
+	// FieldPublicAddr holds the string denoting the public_addr field in the database.
+	FieldPublicAddr = "public_addr"
 	// FieldUpstream holds the string denoting the upstream field in the database.
 	FieldUpstream = "upstream"
+	// FieldPriority holds the string denoting the priority field in the database.
+	FieldPriority = "priority"
 	// FieldEnabled holds the string denoting the enabled field in the database.
 	FieldEnabled = "enabled"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
@@ -68,7 +74,10 @@ const (
 var Columns = []string{
 	FieldID,
 	FieldName,
+	FieldPublicHost,
+	FieldPublicAddr,
 	FieldUpstream,
+	FieldPriority,
 	FieldEnabled,
 	FieldCreatedAt,
 	FieldUpdatedAt,
@@ -89,6 +98,8 @@ var (
 	NameValidator func(string) error
 	// UpstreamValidator is a validator for the "upstream" field. It is called by the builders before save.
 	UpstreamValidator func(string) error
+	// DefaultPriority holds the default value on creation for the "priority" field.
+	DefaultPriority int
 	// DefaultEnabled holds the default value on creation for the "enabled" field.
 	DefaultEnabled bool
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
@@ -112,9 +123,24 @@ func ByName(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldName, opts...).ToFunc()
 }
 
+// ByPublicHost orders the results by the public_host field.
+func ByPublicHost(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPublicHost, opts...).ToFunc()
+}
+
+// ByPublicAddr orders the results by the public_addr field.
+func ByPublicAddr(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPublicAddr, opts...).ToFunc()
+}
+
 // ByUpstream orders the results by the upstream field.
 func ByUpstream(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldUpstream, opts...).ToFunc()
+}
+
+// ByPriority orders the results by the priority field.
+func ByPriority(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPriority, opts...).ToFunc()
 }
 
 // ByEnabled orders the results by the enabled field.

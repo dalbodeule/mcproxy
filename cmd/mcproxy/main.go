@@ -49,6 +49,7 @@ func main() {
 		Bind:       cfg.GateBind,
 		OnlineMode: cfg.GateOnlineMode,
 		Store:      st,
+		Config:     cfg,
 	})
 	if err != nil {
 		observability.Warn("gate_init_skipped", "error", err)

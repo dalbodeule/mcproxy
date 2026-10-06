@@ -30,6 +30,10 @@
 ### M2 완료
 - 룰 관리 API 구현
   - 룰 목록/생성/삭제: ["/api/v1/rules"](internal/api/router.go:153), ["/api/v1/rules/{ruleID}"](internal/api/router.go:178)
+- 서버별 정책 API 구현
+  - 조회/업서트: ["/api/v1/policy/servers/{serverID}"](internal/api/router.go:151)
+- Geo 정책 관리 API 구현
+  - 조회/업서트: ["/api/v1/policy/geo"](internal/api/router.go:180)
 - 접속 평가 API 구현
   - 정책/룰/카운터 기반 평가: ["/api/v1/evaluate"](internal/api/router.go:190)
 - 카운터 및 통계 확장
@@ -79,30 +83,35 @@
 
 ### 1) Gate 데이터 플레인 고도화
 - 현재 Gate 연동은 [`PreLoginEvent`](internal/gate/runtime.go:69), [`PingEvent`](internal/gate/runtime.go:87), 초기 서버 선택 중심이다.
+- 현재 구조는 `client -> public address -> gate -> backend upstream` 중 마지막 프록시 단계는 가능하지만,
+  `public address/hostname` 별로 서로 다른 내부 upstream을 고르는 라우팅 계층은 아직 미구현이다.
 - 다음 작업:
   - Login 이후 단계 차단/허용 로직 추가
   - 서버 전환 이후(PostConnect 계열) 검증 로직 추가
   - 접속 성공/실패에 대한 감사 로그 세분화
   - 서버 동기화를 polling 기반에서 이벤트 기반 또는 더 정교한 방식으로 개선
+  - public address/hostname 기반 upstream 선택 로직 추가
 
 #### 현재 테스트 상태
 - [x] Gate 최소 통합 테스트 추가: [internal/gate/runtime_test.go](internal/gate/runtime_test.go)
   - 빈 서버 목록일 때 초기화 실패 검증
   - backend 서버 등록 후 [`syncServers()`](internal/gate/runtime.go:135), [`pickInitialServer()`](internal/gate/runtime.go:203) 검증
 
-### 2) 서버별 정책 API 구현
-- 현재 전역 정책 API는 있으나 서버별 Threshold API는 없다.
-- 다음 작업:
-  - [x] ["/api/v1/policy/servers/{id}"](internal/api/router.go) 조회/업서트 추가
+### 2) 정책 관리 API 고도화
+- 현재 서버별 정책 API와 Geo 정책 API의 조회/업서트는 완료되었다.
+- 남은 작업:
   - [ ] 서버별 정책 삭제/초기화 API 추가
+  - [ ] Geo 정책 삭제/초기화 API 추가
   - [ ] Gate 서버 선택 시 서버별 정책이 실제 적용되도록 연결 고도화
 
-### 3) Geo 정책 관리 API 구현
-- 평가 로직은 [`evaluateGeoPolicy()`](internal/store/store.go:741)에 있으나 관리 API는 부족하다.
-- 다음 작업:
-  - [x] Geo allow/deny 목록 전용 관리 엔드포인트 추가: ["/api/v1/policy/geo"](internal/api/router.go:180)
-  - [x] 서버별 Geo override 관리 추가: `server_id` query 기반 ["/api/v1/policy/geo"](internal/api/router.go:180)
-  - [ ] Geo 정책 삭제/초기화 API 추가
+### 3) Public address / hostname 라우팅 계층 추가
+- 목표 구조:
+  - `client -(public address)-> gate -(internal/private/unknown upstream)-> minecraft server`
+- 필요한 작업:
+  - [ ] 서버 엔티티 또는 별도 라우팅 엔티티에 `public_host` / `public_addr` / `priority` / `enabled` 필드 도입
+  - [ ] Gate에서 [`VirtualHost`](internal/gate/runtime.go:87) 기준으로 backend upstream을 선택하는 라우터 추가
+  - [ ] 관리 API에서 public address → upstream 매핑 CRUD 제공
+  - [ ] Ping 응답도 hostname 기준으로 다르게 구성
 
 ### 4) 카운터 정밀도 고도화
 - 현재 [`bucketCounter`](internal/store/counter_engine.go:9)는 초안 수준 구현이다.
@@ -119,7 +128,7 @@
   - [x] HTTP API 통합 테스트 추가: [internal/api/router_test.go](internal/api/router_test.go)
   - [x] Gate 최소 통합 테스트 추가: [internal/gate/runtime_test.go](internal/gate/runtime_test.go)
   - [ ] Gate 연동 E2E 테스트
-  - [ ] 테스트 헬퍼/fixture 공통화
+  - [x] 테스트 헬퍼/fixture 공통화: [internal/testutil/testenv.go](internal/testutil/testenv.go)
 
 ### 6) 운영형 배포 정리
 - [Dockerfile](Dockerfile)은 추가됐지만 실운영 배포 세트는 아직 없다.
@@ -170,10 +179,18 @@
   - drain/shutdown 전략 정교화
 
 ## 권장 다음 작업 순서
-1. 서버별 정책 API + Gate 데이터 플레인 적용
-2. Geo 관리 API + 핵심 테스트 작성
-3. Prometheus 메트릭 + 운영 배포 문서
-4. Store 책임 분리 리팩토링
+1. Public address / hostname 기반 라우팅 계층 추가
+2. Gate 데이터 플레인에 서버별 정책 적용 고도화
+3. Ping 캐시 + hostname별 fallback 응답 완성
+4. Prometheus 메트릭 + 운영 배포 문서
+5. Store 책임 분리 리팩토링
+
+## 지금 바로 먼저 시작할 작업
+- 1순위: `public address/hostname -> upstream` 매핑을 저장할 데이터 모델 정리
+- 이유:
+  - 현재 가장 큰 구조적 공백이 이 부분이다.
+  - 이 작업이 끝나야 Gate 초기 서버 선택, Ping 응답 분기, 서버별 정책 적용이 모두 자연스럽게 이어진다.
+  - 즉, [`internal/ent/schema/server.go`](internal/ent/schema/server.go) 또는 별도 라우팅 스키마부터 정리하는 것이 이후 작업의 기반이 된다.
 
 ## 단기 마일스톤(제안)
 - M1: ent 스키마(Servers/Policies/Rules/Counters/Audits)와 마이그레이션, /servers 및 /policy API 초안 완료 ✅

@@ -143,19 +143,23 @@ func init() {
 	// server.NameValidator is a validator for the "name" field. It is called by the builders before save.
 	server.NameValidator = serverDescName.Validators[0].(func(string) error)
 	// serverDescUpstream is the schema descriptor for upstream field.
-	serverDescUpstream := serverFields[1].Descriptor()
+	serverDescUpstream := serverFields[3].Descriptor()
 	// server.UpstreamValidator is a validator for the "upstream" field. It is called by the builders before save.
 	server.UpstreamValidator = serverDescUpstream.Validators[0].(func(string) error)
+	// serverDescPriority is the schema descriptor for priority field.
+	serverDescPriority := serverFields[4].Descriptor()
+	// server.DefaultPriority holds the default value on creation for the priority field.
+	server.DefaultPriority = serverDescPriority.Default.(int)
 	// serverDescEnabled is the schema descriptor for enabled field.
-	serverDescEnabled := serverFields[2].Descriptor()
+	serverDescEnabled := serverFields[5].Descriptor()
 	// server.DefaultEnabled holds the default value on creation for the enabled field.
 	server.DefaultEnabled = serverDescEnabled.Default.(bool)
 	// serverDescCreatedAt is the schema descriptor for created_at field.
-	serverDescCreatedAt := serverFields[3].Descriptor()
+	serverDescCreatedAt := serverFields[6].Descriptor()
 	// server.DefaultCreatedAt holds the default value on creation for the created_at field.
 	server.DefaultCreatedAt = serverDescCreatedAt.Default.(func() time.Time)
 	// serverDescUpdatedAt is the schema descriptor for updated_at field.
-	serverDescUpdatedAt := serverFields[4].Descriptor()
+	serverDescUpdatedAt := serverFields[7].Descriptor()
 	// server.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	server.DefaultUpdatedAt = serverDescUpdatedAt.Default.(func() time.Time)
 	// server.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.

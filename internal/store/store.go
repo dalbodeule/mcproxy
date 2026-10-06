@@ -44,18 +44,22 @@ type Stats struct {
 }
 
 type ServerInput struct {
-	Name     string `json:"name"`
-	Upstream string `json:"upstream"`
-	Enabled  *bool  `json:"enabled,omitempty"`
+	Name       string  `json:"name"`
+	PublicHost *string `json:"public_host,omitempty"`
+	Upstream   string  `json:"upstream"`
+	Priority   *int    `json:"priority,omitempty"`
+	Enabled    *bool   `json:"enabled,omitempty"`
 }
 
 type ServerDTO struct {
-	ID        int       `json:"id"`
-	Name      string    `json:"name"`
-	Upstream  string    `json:"upstream"`
-	Enabled   bool      `json:"enabled"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         int       `json:"id"`
+	Name       string    `json:"name"`
+	PublicHost string    `json:"public_host,omitempty"`
+	Upstream   string    `json:"upstream"`
+	Priority   int       `json:"priority"`
+	Enabled    bool      `json:"enabled"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type PolicyInput struct {
@@ -293,6 +297,12 @@ func (s *Store) GetServer(ctx context.Context, id int) (*ServerDTO, error) {
 
 func (s *Store) CreateServer(ctx context.Context, in ServerInput) (*ServerDTO, error) {
 	b := s.client.Server.Create().SetName(strings.TrimSpace(in.Name)).SetUpstream(strings.TrimSpace(in.Upstream))
+	if in.PublicHost != nil {
+		b.SetPublicHost(strings.ToLower(strings.TrimSpace(*in.PublicHost)))
+	}
+	if in.Priority != nil {
+		b.SetPriority(*in.Priority)
+	}
 	if in.Enabled != nil {
 		b.SetEnabled(*in.Enabled)
 	}
@@ -313,6 +323,12 @@ func (s *Store) UpdateServer(ctx context.Context, id int, in ServerInput) (*Serv
 	}
 	if v := strings.TrimSpace(in.Upstream); v != "" {
 		b.SetUpstream(v)
+	}
+	if in.PublicHost != nil {
+		b.SetPublicHost(strings.ToLower(strings.TrimSpace(*in.PublicHost)))
+	}
+	if in.Priority != nil {
+		b.SetPriority(*in.Priority)
 	}
 	if in.Enabled != nil {
 		b.SetEnabled(*in.Enabled)
@@ -584,14 +600,11 @@ func (s *Store) EvaluateAttempt(ctx context.Context, in EvaluateAttemptInput) (*
 }
 
 func serverDTO(n *ent.Server) ServerDTO {
-	return ServerDTO{
-		ID:        n.ID,
-		Name:      n.Name,
-		Upstream:  n.Upstream,
-		Enabled:   n.Enabled,
-		CreatedAt: n.CreatedAt,
-		UpdatedAt: n.UpdatedAt,
+	publicHost := n.Name
+	if n.PublicHost != nil && strings.TrimSpace(*n.PublicHost) != "" {
+		publicHost = strings.TrimSpace(*n.PublicHost)
 	}
+	return ServerDTO{ID: n.ID, Name: n.Name, PublicHost: publicHost, Upstream: n.Upstream, Priority: n.Priority, Enabled: n.Enabled, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt}
 }
 
 func policyDTO(scope string, n *ent.AccessPolicy) PolicyDTO {

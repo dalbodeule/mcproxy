@@ -12,18 +12,22 @@ import (
 
 // Config holds runtime configuration for mcproxy.
 type Config struct {
-	HTTPAddr       string
-	AdminToken     string
-	GeoIPPath      string
-	AdminThrottle  int
-	RedisAddr      string
-	RedisChannel   string
-	LokiHost       string
-	LogIdentify    string
-	GateBind       string
-	GateOnlineMode bool
-	DBDriver       string // "sqlite" (default) or "postgres"
-	DSN            string // full connection string for the chosen driver
+	HTTPAddr            string
+	AdminToken          string
+	GeoIPPath           string
+	AdminThrottle       int
+	RedisAddr           string
+	RedisChannel        string
+	LokiHost            string
+	LogIdentify         string
+	PingCacheTTL        int
+	PingFallbackMotd    string
+	PingOfflineMotd     string
+	PingFallbackFavicon string
+	GateBind            string
+	GateOnlineMode      bool
+	DBDriver            string // "sqlite" (default) or "postgres"
+	DSN                 string // full connection string for the chosen driver
 }
 
 // LoadFromEnv reads configuration from environment variables with sane defaults.
@@ -38,6 +42,10 @@ func LoadFromEnv() Config {
 	redisChannel := getenv("MCPROXY_REDIS_CHANNEL", "mcproxy:events")
 	lokiHost := getenv("MCPROXY_LOKI_HOST", "")
 	logIdentify := getenv("MCPROXY_LOG_IDENTIFY", "local")
+	pingCacheTTL := getenvInt("MCPROXY_PING_CACHE_TTL_SEC", 300)
+	pingFallbackMotd := getenv("MCPROXY_PING_FALLBACK_MOTD", "mcproxy available")
+	pingOfflineMotd := getenv("MCPROXY_PING_OFFLINE_MOTD", "Server unavailable")
+	pingFallbackFavicon := getenv("MCPROXY_PING_FALLBACK_FAVICON", "")
 	gateBind := getenv("MCPROXY_GATE_BIND", "0.0.0.0:25565")
 	gateOnlineMode := getenvBool("MCPROXY_GATE_ONLINE_MODE", false)
 	driver := getenv("MCPROXY_DB_DRIVER", "sqlite")
@@ -54,18 +62,22 @@ func LoadFromEnv() Config {
 	}
 
 	return Config{
-		HTTPAddr:       httpAddr,
-		AdminToken:     adminToken,
-		GeoIPPath:      geoPath,
-		AdminThrottle:  adminThrottle,
-		RedisAddr:      redisAddr,
-		RedisChannel:   redisChannel,
-		LokiHost:       lokiHost,
-		LogIdentify:    logIdentify,
-		GateBind:       gateBind,
-		GateOnlineMode: gateOnlineMode,
-		DBDriver:       driver,
-		DSN:            dsn,
+		HTTPAddr:            httpAddr,
+		AdminToken:          adminToken,
+		GeoIPPath:           geoPath,
+		AdminThrottle:       adminThrottle,
+		RedisAddr:           redisAddr,
+		RedisChannel:        redisChannel,
+		LokiHost:            lokiHost,
+		LogIdentify:         logIdentify,
+		PingCacheTTL:        pingCacheTTL,
+		PingFallbackMotd:    pingFallbackMotd,
+		PingOfflineMotd:     pingOfflineMotd,
+		PingFallbackFavicon: pingFallbackFavicon,
+		GateBind:            gateBind,
+		GateOnlineMode:      gateOnlineMode,
+		DBDriver:            driver,
+		DSN:                 dsn,
 	}
 }
 

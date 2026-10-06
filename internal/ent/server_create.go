@@ -32,9 +32,51 @@ func (_c *ServerCreate) SetName(v string) *ServerCreate {
 	return _c
 }
 
+// SetPublicHost sets the "public_host" field.
+func (_c *ServerCreate) SetPublicHost(v string) *ServerCreate {
+	_c.mutation.SetPublicHost(v)
+	return _c
+}
+
+// SetNillablePublicHost sets the "public_host" field if the given value is not nil.
+func (_c *ServerCreate) SetNillablePublicHost(v *string) *ServerCreate {
+	if v != nil {
+		_c.SetPublicHost(*v)
+	}
+	return _c
+}
+
+// SetPublicAddr sets the "public_addr" field.
+func (_c *ServerCreate) SetPublicAddr(v string) *ServerCreate {
+	_c.mutation.SetPublicAddr(v)
+	return _c
+}
+
+// SetNillablePublicAddr sets the "public_addr" field if the given value is not nil.
+func (_c *ServerCreate) SetNillablePublicAddr(v *string) *ServerCreate {
+	if v != nil {
+		_c.SetPublicAddr(*v)
+	}
+	return _c
+}
+
 // SetUpstream sets the "upstream" field.
 func (_c *ServerCreate) SetUpstream(v string) *ServerCreate {
 	_c.mutation.SetUpstream(v)
+	return _c
+}
+
+// SetPriority sets the "priority" field.
+func (_c *ServerCreate) SetPriority(v int) *ServerCreate {
+	_c.mutation.SetPriority(v)
+	return _c
+}
+
+// SetNillablePriority sets the "priority" field if the given value is not nil.
+func (_c *ServerCreate) SetNillablePriority(v *int) *ServerCreate {
+	if v != nil {
+		_c.SetPriority(*v)
+	}
 	return _c
 }
 
@@ -175,6 +217,10 @@ func (_c *ServerCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *ServerCreate) defaults() {
+	if _, ok := _c.mutation.Priority(); !ok {
+		v := server.DefaultPriority
+		_c.mutation.SetPriority(v)
+	}
 	if _, ok := _c.mutation.Enabled(); !ok {
 		v := server.DefaultEnabled
 		_c.mutation.SetEnabled(v)
@@ -206,6 +252,9 @@ func (_c *ServerCreate) check() error {
 		if err := server.UpstreamValidator(v); err != nil {
 			return &ValidationError{Name: "upstream", err: fmt.Errorf(`ent: validator failed for field "Server.upstream": %w`, err)}
 		}
+	}
+	if _, ok := _c.mutation.Priority(); !ok {
+		return &ValidationError{Name: "priority", err: errors.New(`ent: missing required field "Server.priority"`)}
 	}
 	if _, ok := _c.mutation.Enabled(); !ok {
 		return &ValidationError{Name: "enabled", err: errors.New(`ent: missing required field "Server.enabled"`)}
@@ -248,9 +297,21 @@ func (_c *ServerCreate) createSpec() (*Server, *sqlgraph.CreateSpec) {
 		_spec.SetField(server.FieldName, field.TypeString, value)
 		_node.Name = value
 	}
+	if value, ok := _c.mutation.PublicHost(); ok {
+		_spec.SetField(server.FieldPublicHost, field.TypeString, value)
+		_node.PublicHost = &value
+	}
+	if value, ok := _c.mutation.PublicAddr(); ok {
+		_spec.SetField(server.FieldPublicAddr, field.TypeString, value)
+		_node.PublicAddr = &value
+	}
 	if value, ok := _c.mutation.Upstream(); ok {
 		_spec.SetField(server.FieldUpstream, field.TypeString, value)
 		_node.Upstream = value
+	}
+	if value, ok := _c.mutation.Priority(); ok {
+		_spec.SetField(server.FieldPriority, field.TypeInt, value)
+		_node.Priority = value
 	}
 	if value, ok := _c.mutation.Enabled(); ok {
 		_spec.SetField(server.FieldEnabled, field.TypeBool, value)
@@ -396,6 +457,42 @@ func (u *ServerUpsert) UpdateName() *ServerUpsert {
 	return u
 }
 
+// SetPublicHost sets the "public_host" field.
+func (u *ServerUpsert) SetPublicHost(v string) *ServerUpsert {
+	u.Set(server.FieldPublicHost, v)
+	return u
+}
+
+// UpdatePublicHost sets the "public_host" field to the value that was provided on create.
+func (u *ServerUpsert) UpdatePublicHost() *ServerUpsert {
+	u.SetExcluded(server.FieldPublicHost)
+	return u
+}
+
+// ClearPublicHost clears the value of the "public_host" field.
+func (u *ServerUpsert) ClearPublicHost() *ServerUpsert {
+	u.SetNull(server.FieldPublicHost)
+	return u
+}
+
+// SetPublicAddr sets the "public_addr" field.
+func (u *ServerUpsert) SetPublicAddr(v string) *ServerUpsert {
+	u.Set(server.FieldPublicAddr, v)
+	return u
+}
+
+// UpdatePublicAddr sets the "public_addr" field to the value that was provided on create.
+func (u *ServerUpsert) UpdatePublicAddr() *ServerUpsert {
+	u.SetExcluded(server.FieldPublicAddr)
+	return u
+}
+
+// ClearPublicAddr clears the value of the "public_addr" field.
+func (u *ServerUpsert) ClearPublicAddr() *ServerUpsert {
+	u.SetNull(server.FieldPublicAddr)
+	return u
+}
+
 // SetUpstream sets the "upstream" field.
 func (u *ServerUpsert) SetUpstream(v string) *ServerUpsert {
 	u.Set(server.FieldUpstream, v)
@@ -405,6 +502,24 @@ func (u *ServerUpsert) SetUpstream(v string) *ServerUpsert {
 // UpdateUpstream sets the "upstream" field to the value that was provided on create.
 func (u *ServerUpsert) UpdateUpstream() *ServerUpsert {
 	u.SetExcluded(server.FieldUpstream)
+	return u
+}
+
+// SetPriority sets the "priority" field.
+func (u *ServerUpsert) SetPriority(v int) *ServerUpsert {
+	u.Set(server.FieldPriority, v)
+	return u
+}
+
+// UpdatePriority sets the "priority" field to the value that was provided on create.
+func (u *ServerUpsert) UpdatePriority() *ServerUpsert {
+	u.SetExcluded(server.FieldPriority)
+	return u
+}
+
+// AddPriority adds v to the "priority" field.
+func (u *ServerUpsert) AddPriority(v int) *ServerUpsert {
+	u.Add(server.FieldPriority, v)
 	return u
 }
 
@@ -498,6 +613,48 @@ func (u *ServerUpsertOne) UpdateName() *ServerUpsertOne {
 	})
 }
 
+// SetPublicHost sets the "public_host" field.
+func (u *ServerUpsertOne) SetPublicHost(v string) *ServerUpsertOne {
+	return u.Update(func(s *ServerUpsert) {
+		s.SetPublicHost(v)
+	})
+}
+
+// UpdatePublicHost sets the "public_host" field to the value that was provided on create.
+func (u *ServerUpsertOne) UpdatePublicHost() *ServerUpsertOne {
+	return u.Update(func(s *ServerUpsert) {
+		s.UpdatePublicHost()
+	})
+}
+
+// ClearPublicHost clears the value of the "public_host" field.
+func (u *ServerUpsertOne) ClearPublicHost() *ServerUpsertOne {
+	return u.Update(func(s *ServerUpsert) {
+		s.ClearPublicHost()
+	})
+}
+
+// SetPublicAddr sets the "public_addr" field.
+func (u *ServerUpsertOne) SetPublicAddr(v string) *ServerUpsertOne {
+	return u.Update(func(s *ServerUpsert) {
+		s.SetPublicAddr(v)
+	})
+}
+
+// UpdatePublicAddr sets the "public_addr" field to the value that was provided on create.
+func (u *ServerUpsertOne) UpdatePublicAddr() *ServerUpsertOne {
+	return u.Update(func(s *ServerUpsert) {
+		s.UpdatePublicAddr()
+	})
+}
+
+// ClearPublicAddr clears the value of the "public_addr" field.
+func (u *ServerUpsertOne) ClearPublicAddr() *ServerUpsertOne {
+	return u.Update(func(s *ServerUpsert) {
+		s.ClearPublicAddr()
+	})
+}
+
 // SetUpstream sets the "upstream" field.
 func (u *ServerUpsertOne) SetUpstream(v string) *ServerUpsertOne {
 	return u.Update(func(s *ServerUpsert) {
@@ -509,6 +666,27 @@ func (u *ServerUpsertOne) SetUpstream(v string) *ServerUpsertOne {
 func (u *ServerUpsertOne) UpdateUpstream() *ServerUpsertOne {
 	return u.Update(func(s *ServerUpsert) {
 		s.UpdateUpstream()
+	})
+}
+
+// SetPriority sets the "priority" field.
+func (u *ServerUpsertOne) SetPriority(v int) *ServerUpsertOne {
+	return u.Update(func(s *ServerUpsert) {
+		s.SetPriority(v)
+	})
+}
+
+// AddPriority adds v to the "priority" field.
+func (u *ServerUpsertOne) AddPriority(v int) *ServerUpsertOne {
+	return u.Update(func(s *ServerUpsert) {
+		s.AddPriority(v)
+	})
+}
+
+// UpdatePriority sets the "priority" field to the value that was provided on create.
+func (u *ServerUpsertOne) UpdatePriority() *ServerUpsertOne {
+	return u.Update(func(s *ServerUpsert) {
+		s.UpdatePriority()
 	})
 }
 
@@ -772,6 +950,48 @@ func (u *ServerUpsertBulk) UpdateName() *ServerUpsertBulk {
 	})
 }
 
+// SetPublicHost sets the "public_host" field.
+func (u *ServerUpsertBulk) SetPublicHost(v string) *ServerUpsertBulk {
+	return u.Update(func(s *ServerUpsert) {
+		s.SetPublicHost(v)
+	})
+}
+
+// UpdatePublicHost sets the "public_host" field to the value that was provided on create.
+func (u *ServerUpsertBulk) UpdatePublicHost() *ServerUpsertBulk {
+	return u.Update(func(s *ServerUpsert) {
+		s.UpdatePublicHost()
+	})
+}
+
+// ClearPublicHost clears the value of the "public_host" field.
+func (u *ServerUpsertBulk) ClearPublicHost() *ServerUpsertBulk {
+	return u.Update(func(s *ServerUpsert) {
+		s.ClearPublicHost()
+	})
+}
+
+// SetPublicAddr sets the "public_addr" field.
+func (u *ServerUpsertBulk) SetPublicAddr(v string) *ServerUpsertBulk {
+	return u.Update(func(s *ServerUpsert) {
+		s.SetPublicAddr(v)
+	})
+}
+
+// UpdatePublicAddr sets the "public_addr" field to the value that was provided on create.
+func (u *ServerUpsertBulk) UpdatePublicAddr() *ServerUpsertBulk {
+	return u.Update(func(s *ServerUpsert) {
+		s.UpdatePublicAddr()
+	})
+}
+
+// ClearPublicAddr clears the value of the "public_addr" field.
+func (u *ServerUpsertBulk) ClearPublicAddr() *ServerUpsertBulk {
+	return u.Update(func(s *ServerUpsert) {
+		s.ClearPublicAddr()
+	})
+}
+
 // SetUpstream sets the "upstream" field.
 func (u *ServerUpsertBulk) SetUpstream(v string) *ServerUpsertBulk {
 	return u.Update(func(s *ServerUpsert) {
@@ -783,6 +1003,27 @@ func (u *ServerUpsertBulk) SetUpstream(v string) *ServerUpsertBulk {
 func (u *ServerUpsertBulk) UpdateUpstream() *ServerUpsertBulk {
 	return u.Update(func(s *ServerUpsert) {
 		s.UpdateUpstream()
+	})
+}
+
+// SetPriority sets the "priority" field.
+func (u *ServerUpsertBulk) SetPriority(v int) *ServerUpsertBulk {
+	return u.Update(func(s *ServerUpsert) {
+		s.SetPriority(v)
+	})
+}
+
+// AddPriority adds v to the "priority" field.
+func (u *ServerUpsertBulk) AddPriority(v int) *ServerUpsertBulk {
+	return u.Update(func(s *ServerUpsert) {
+		s.AddPriority(v)
+	})
+}
+
+// UpdatePriority sets the "priority" field to the value that was provided on create.
+func (u *ServerUpsertBulk) UpdatePriority() *ServerUpsertBulk {
+	return u.Update(func(s *ServerUpsert) {
+		s.UpdatePriority()
 	})
 }
 

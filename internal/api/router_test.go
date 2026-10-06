@@ -2,37 +2,22 @@ package api
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 
-	"mcproxy/internal/config"
-	"mcproxy/internal/store"
+	"mcproxy/internal/testutil"
 )
 
 func newTestRouter(t *testing.T) http.Handler {
 	t.Helper()
-	dsn := "file:" + filepath.Join(t.TempDir(), "mcproxy-test.db") + "?_fk=1"
-	cfg := config.Config{
-		HTTPAddr:      "127.0.0.1:8080",
-		AdminToken:    "test-token",
-		AdminThrottle: 32,
-		DBDriver:      "sqlite",
-		DSN:           dsn,
-		LogIdentify:   "test",
-	}
-	st, err := store.Open(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
+	cfg := testutil.NewTestConfig(t)
+	st := testutil.NewTestStore(t)
 	return NewRouter(cfg, Dependencies{Store: st, Geo: nil})
 }
 
-func authReq(method, path string, body any) *http.Request {
+func authReq(t *testing.T, method, path string, body any) *http.Request {
 	var reader *bytes.Reader
 	if body == nil {
 		reader = bytes.NewReader(nil)
@@ -41,8 +26,7 @@ func authReq(method, path string, body any) *http.Request {
 		reader = bytes.NewReader(b)
 	}
 	req := httptest.NewRequest(method, path, reader)
-	req.Header.Set("Authorization", "Bearer test-token")
-	req.Header.Set("Content-Type", "application/json")
+	req.Header = testutil.AuthRequest(t, method, path, nil).Header.Clone()
 	return req
 }
 
@@ -61,7 +45,7 @@ func TestServerLifecycleAndServerPolicy(t *testing.T) {
 
 	// create server
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, authReq(http.MethodPost, "/api/v1/servers/", map[string]any{
+	r.ServeHTTP(rec, authReq(t, http.MethodPost, "/api/v1/servers/", map[string]any{
 		"name":     "lobby",
 		"upstream": "127.0.0.1:25566",
 	}))
@@ -74,7 +58,7 @@ func TestServerLifecycleAndServerPolicy(t *testing.T) {
 
 	// update server policy
 	rec = httptest.NewRecorder()
-	r.ServeHTTP(rec, authReq(http.MethodPut, "/api/v1/policy/servers/1", map[string]any{
+	r.ServeHTTP(rec, authReq(t, http.MethodPut, "/api/v1/policy/servers/1", map[string]any{
 		"ip_burst_10s":   7,
 		"name_burst_60s": 12,
 		"geo_mode":       "allow",
@@ -86,7 +70,7 @@ func TestServerLifecycleAndServerPolicy(t *testing.T) {
 
 	// get server policy
 	rec = httptest.NewRecorder()
-	r.ServeHTTP(rec, authReq(http.MethodGet, "/api/v1/policy/servers/1", nil))
+	r.ServeHTTP(rec, authReq(t, http.MethodGet, "/api/v1/policy/servers/1", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get server policy expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -98,7 +82,7 @@ func TestServerLifecycleAndServerPolicy(t *testing.T) {
 
 	// get server by id
 	rec = httptest.NewRecorder()
-	r.ServeHTTP(rec, authReq(http.MethodGet, "/api/v1/servers/1/", nil))
+	r.ServeHTTP(rec, authReq(t, http.MethodGet, "/api/v1/servers/1/", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get server expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -112,7 +96,7 @@ func TestGeoPolicyEndpoints(t *testing.T) {
 
 	// global geo upsert
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, authReq(http.MethodPut, "/api/v1/policy/geo", map[string]any{
+	r.ServeHTTP(rec, authReq(t, http.MethodPut, "/api/v1/policy/geo", map[string]any{
 		"mode":      "deny",
 		"countries": []string{"RU", "CN", "ru"},
 	}))
@@ -122,7 +106,7 @@ func TestGeoPolicyEndpoints(t *testing.T) {
 
 	// global geo get
 	rec = httptest.NewRecorder()
-	r.ServeHTTP(rec, authReq(http.MethodGet, "/api/v1/policy/geo", nil))
+	r.ServeHTTP(rec, authReq(t, http.MethodGet, "/api/v1/policy/geo", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get global geo expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -134,7 +118,7 @@ func TestGeoPolicyEndpoints(t *testing.T) {
 
 	// create server then set server-scoped geo policy
 	rec = httptest.NewRecorder()
-	r.ServeHTTP(rec, authReq(http.MethodPost, "/api/v1/servers/", map[string]any{
+	r.ServeHTTP(rec, authReq(t, http.MethodPost, "/api/v1/servers/", map[string]any{
 		"name":     "survival",
 		"upstream": "127.0.0.1:25567",
 	}))
@@ -143,7 +127,7 @@ func TestGeoPolicyEndpoints(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	r.ServeHTTP(rec, authReq(http.MethodPut, "/api/v1/policy/geo?server_id=1", map[string]any{
+	r.ServeHTTP(rec, authReq(t, http.MethodPut, "/api/v1/policy/geo?server_id=1", map[string]any{
 		"mode":      "allow",
 		"countries": []string{"KR"},
 	}))
@@ -152,7 +136,7 @@ func TestGeoPolicyEndpoints(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	r.ServeHTTP(rec, authReq(http.MethodGet, "/api/v1/policy/geo?server_id=1", nil))
+	r.ServeHTTP(rec, authReq(t, http.MethodGet, "/api/v1/policy/geo?server_id=1", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get server geo expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
