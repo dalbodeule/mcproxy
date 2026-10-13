@@ -12,7 +12,7 @@ jobs:
   go:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27.x'
@@ -40,7 +40,7 @@ jobs:
       run:
         working-directory: admin-panel
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: '22.17.x'
@@ -54,7 +54,7 @@ jobs:
   compose:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Validate Compose
         env:
           POSTGRES_PASSWORD: ci-validation-only
@@ -64,21 +64,21 @@ jobs:
   compose-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Start and probe Compose stack
         run: make compose-smoke
 
   postgres-restore-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Rehearse PostgreSQL backup and restore
         run: make postgres-restore-smoke
 
   deployment-manifests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Validate deployment YAML
         run: |
           ruby -e 'require "yaml"; ARGV.each { |f| YAML.load_stream(File.read(f)) }' \
@@ -93,7 +93,7 @@ jobs:
   container-images:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build mcproxy image
         run: docker build --pull=false -t mcproxy:ci .
       - name: Build admin-panel image
@@ -104,7 +104,7 @@ jobs:
   gate-e2e:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27.x'
@@ -122,6 +122,6 @@ jobs:
   panel-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Run admin panel container smoke test
         run: make panel-smoke
