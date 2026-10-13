@@ -4,7 +4,7 @@ go 1.27
 
 require (
 	entgo.io/ent v0.14.6 // ORM (codegen)
-	github.com/go-chi/chi/v5 v5.2.5 // HTTP router
+	github.com/go-chi/chi/v5 v5.3.2 // HTTP router
 	github.com/go-logr/logr v1.4.4
 	github.com/grafana/loki-client-go v0.0.0-20251015150631-c42bbddc310a
 	github.com/jackc/pgx/v5 v5.9.1 // PostgreSQL driver core
