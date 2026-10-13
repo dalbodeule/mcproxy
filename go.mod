@@ -10,7 +10,7 @@ require (
 	github.com/jackc/pgx/v5 v5.9.1 // PostgreSQL driver core
 	github.com/joho/godotenv v1.3.0
 	github.com/oschwald/geoip2-golang v1.13.0 // GeoIP reader
-	github.com/redis/go-redis/v9 v9.7.3
+	github.com/redis/go-redis/v9 v9.23.0
 	github.com/robinbraemer/event v0.1.1
 	github.com/samber/slog-loki/v3 v3.7.2
 	github.com/samber/slog-multi v1.8.0
@@ -31,7 +31,6 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dboslee/lru v0.0.1 // indirect
 	github.com/dennwc/varint v1.0.0 // indirect
-	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.11.1 // indirect
 	github.com/edwingeng/deque/v2 v2.1.1 // indirect
