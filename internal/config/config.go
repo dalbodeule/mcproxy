@@ -12,22 +12,26 @@ import (
 
 // Config holds runtime configuration for mcproxy.
 type Config struct {
-	HTTPAddr            string
-	AdminToken          string
-	GeoIPPath           string
-	AdminThrottle       int
-	RedisAddr           string
-	RedisChannel        string
-	LokiHost            string
-	LogIdentify         string
-	PingCacheTTL        int
-	PingFallbackMotd    string
-	PingOfflineMotd     string
-	PingFallbackFavicon string
-	GateBind            string
-	GateOnlineMode      bool
-	DBDriver            string // "sqlite" (default) or "postgres"
-	DSN                 string // full connection string for the chosen driver
+	HTTPAddr              string
+	AdminToken            string
+	GeoIPPath             string
+	AdminThrottle         int
+	AdminAllowedOrigins   []string
+	RedisAddr             string
+	RedisChannel          string
+	LokiHost              string
+	LogIdentify           string
+	PingCacheTTL          int
+	PingFallbackMotd      string
+	PingOfflineMotd       string
+	PingFallbackFavicon   string
+	GateBind              string
+	GateOnlineMode        bool
+	GateForwardingMode    string
+	GateVelocitySecret    string
+	GateBungeeGuardSecret string
+	DBDriver              string // "sqlite" (default) or "postgres"
+	DSN                   string // full connection string for the chosen driver
 }
 
 // LoadFromEnv reads configuration from environment variables with sane defaults.
@@ -38,6 +42,7 @@ func LoadFromEnv() Config {
 	adminToken := getenv("MCPROXY_ADMIN_TOKEN", "")
 	geoPath := getenv("MCPROXY_GEOIP_PATH", "")
 	adminThrottle := getenvInt("MCPROXY_ADMIN_THROTTLE", 32)
+	adminAllowedOrigins := splitCSV(os.Getenv("MCPROXY_ADMIN_ALLOWED_ORIGINS"))
 	redisAddr := getenv("MCPROXY_REDIS_ADDR", "")
 	redisChannel := getenv("MCPROXY_REDIS_CHANNEL", "mcproxy:events")
 	lokiHost := getenv("MCPROXY_LOKI_HOST", "")
@@ -48,6 +53,9 @@ func LoadFromEnv() Config {
 	pingFallbackFavicon := getenv("MCPROXY_PING_FALLBACK_FAVICON", "")
 	gateBind := getenv("MCPROXY_GATE_BIND", "0.0.0.0:25565")
 	gateOnlineMode := getenvBool("MCPROXY_GATE_ONLINE_MODE", false)
+	gateForwardingMode := strings.ToLower(strings.TrimSpace(getenv("MCPROXY_GATE_FORWARDING_MODE", "legacy")))
+	gateVelocitySecret := getenv("MCPROXY_GATE_VELOCITY_SECRET", "")
+	gateBungeeGuardSecret := getenv("MCPROXY_GATE_BUNGEGUARD_SECRET", "")
 	driver := getenv("MCPROXY_DB_DRIVER", "sqlite")
 
 	var dsn string
@@ -62,27 +70,43 @@ func LoadFromEnv() Config {
 	}
 
 	return Config{
-		HTTPAddr:            httpAddr,
-		AdminToken:          adminToken,
-		GeoIPPath:           geoPath,
-		AdminThrottle:       adminThrottle,
-		RedisAddr:           redisAddr,
-		RedisChannel:        redisChannel,
-		LokiHost:            lokiHost,
-		LogIdentify:         logIdentify,
-		PingCacheTTL:        pingCacheTTL,
-		PingFallbackMotd:    pingFallbackMotd,
-		PingOfflineMotd:     pingOfflineMotd,
-		PingFallbackFavicon: pingFallbackFavicon,
-		GateBind:            gateBind,
-		GateOnlineMode:      gateOnlineMode,
-		DBDriver:            driver,
-		DSN:                 dsn,
+		HTTPAddr:              httpAddr,
+		AdminToken:            adminToken,
+		GeoIPPath:             geoPath,
+		AdminThrottle:         adminThrottle,
+		AdminAllowedOrigins:   adminAllowedOrigins,
+		RedisAddr:             redisAddr,
+		RedisChannel:          redisChannel,
+		LokiHost:              lokiHost,
+		LogIdentify:           logIdentify,
+		PingCacheTTL:          pingCacheTTL,
+		PingFallbackMotd:      pingFallbackMotd,
+		PingOfflineMotd:       pingOfflineMotd,
+		PingFallbackFavicon:   pingFallbackFavicon,
+		GateBind:              gateBind,
+		GateOnlineMode:        gateOnlineMode,
+		GateForwardingMode:    gateForwardingMode,
+		GateVelocitySecret:    gateVelocitySecret,
+		GateBungeeGuardSecret: gateBungeeGuardSecret,
+		DBDriver:              driver,
+		DSN:                   dsn,
 	}
 }
 
 func (c Config) String() string {
-	return fmt.Sprintf("http=%s db=%s dsn=%s geo=%s gate=%s identify=%s", c.HTTPAddr, c.DBDriver, c.DSN, c.GeoIPPath, c.GateBind, c.LogIdentify)
+	// Never include DSNs or secrets in startup logs; PostgreSQL DSNs commonly contain passwords.
+	return fmt.Sprintf("http=%s db=%s geo=%s gate=%s identify=%s", c.HTTPAddr, c.DBDriver, c.GeoIPPath, c.GateBind, c.LogIdentify)
+}
+
+func splitCSV(v string) []string {
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func getenv(key, def string) string {

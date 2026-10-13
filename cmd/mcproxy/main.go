@@ -91,7 +91,7 @@ func main() {
 
 	observability.Info("http_api_listening", "addr", cfg.HTTPAddr)
 	if gateRuntime != nil {
-		observability.Info("gate_listening", "addr", gateRuntime.Bind())
+		observability.Info("gate_start_requested", "addr", gateRuntime.Bind())
 	}
 
 	select {

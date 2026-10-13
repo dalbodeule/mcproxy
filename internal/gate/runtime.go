@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/robinbraemer/event"
 	"go.minekube.com/common/minecraft/component"
 	gatecfg "go.minekube.com/gate/pkg/edition/java/config"
@@ -66,7 +67,26 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	cfg := gatecfg.DefaultConfig
 	cfg.Bind = opts.Bind
 	cfg.OnlineMode = opts.OnlineMode
-	cfg.Forwarding.Mode = gatecfg.NoneForwardingMode
+	forwardingMode := strings.ToLower(strings.TrimSpace(opts.Config.GateForwardingMode))
+	if forwardingMode == "" {
+		forwardingMode = string(gatecfg.LegacyForwardingMode)
+	}
+	cfg.Forwarding.Mode = gatecfg.ForwardingMode(forwardingMode)
+	cfg.Forwarding.VelocitySecret = opts.Config.GateVelocitySecret
+	cfg.Forwarding.BungeeGuardSecret = opts.Config.GateBungeeGuardSecret
+	switch cfg.Forwarding.Mode {
+	case gatecfg.NoneForwardingMode, gatecfg.LegacyForwardingMode:
+	case gatecfg.VelocityForwardingMode:
+		if strings.TrimSpace(cfg.Forwarding.VelocitySecret) == "" {
+			return nil, fmt.Errorf("Gate velocity forwarding requires MCPROXY_GATE_VELOCITY_SECRET")
+		}
+	case gatecfg.BungeeGuardForwardingMode:
+		if strings.TrimSpace(cfg.Forwarding.BungeeGuardSecret) == "" {
+			return nil, fmt.Errorf("Gate bungeeguard forwarding requires MCPROXY_GATE_BUNGEGUARD_SECRET")
+		}
+	default:
+		return nil, fmt.Errorf("unsupported Gate forwarding mode %q", forwardingMode)
+	}
 	cfg.Servers = map[string]string{}
 	cfg.Try = make([]string, 0, len(servers))
 	for _, s := range servers {
@@ -129,6 +149,25 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		} else {
 			observability.Warn("gate_initial_server_missing", "host", host)
 		}
+	})
+	event.Subscribe(p.Event(), 0, func(e *javaproxy.ServerPostConnectEvent) {
+		player := e.Player()
+		if player.CurrentServer() == nil {
+			observability.Warn("gate_player_connected_without_current_server", "username", player.Username())
+			return
+		}
+		serverInfo := player.CurrentServer().Server().ServerInfo()
+		observability.Info("gate_player_connected", "username", player.Username(), "server", serverInfo.Name(), "upstream", serverInfo.Addr().String())
+	})
+	event.Subscribe(p.Event(), 0, func(e *javaproxy.KickedFromServerEvent) {
+		serverInfo := e.Server().ServerInfo()
+		observability.Warn("gate_backend_rejected_player",
+			"username", e.Player().Username(),
+			"server", serverInfo.Name(),
+			"upstream", serverInfo.Addr().String(),
+			"during_server_connect", e.KickedDuringServerConnect(),
+			"reason", e.OriginalReason(),
+		)
 	})
 
 	return r, nil
@@ -198,6 +237,7 @@ func (r *Runtime) Start(ctx context.Context) error {
 		return fmt.Errorf("gate proxy not initialized")
 	}
 	observability.Info("gate_starting", "bind", r.bind)
+	ctx = logr.NewContext(ctx, logr.FromSlogHandler(observability.L().Handler()))
 	return p.Start(ctx)
 }
 

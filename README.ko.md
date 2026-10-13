@@ -72,6 +72,15 @@ mcproxy는 Minekube Gate(Go)를 기반으로 한 Minecraft(Java Edition) 보안 
 
 - 실제 예시 파일: [inc.env](inc.env)
 
+Gate 백엔드 연결
+
+- Go 소스와 컨테이너 빌드는 Go 1.27을 사용합니다.
+- `MCPROXY_GATE_FORWARDING_MODE`는 `none`, `legacy`, `velocity`, `bungeeguard`를 지원하며 기본값은 `legacy`입니다.
+- Paper/Spigot에서 Legacy 전달을 사용할 경우 백엔드는 `online-mode=false`, `settings.bungeecord=true`로 설정해야 합니다. 백엔드 포트는 mcproxy만 접근할 수 있도록 방화벽으로 제한하십시오.
+- Velocity 전달은 `MCPROXY_GATE_FORWARDING_MODE=velocity`와 `MCPROXY_GATE_VELOCITY_SECRET` 설정 후 백엔드에도 같은 secret을 지정해야 합니다.
+- Docker 안에서 실행할 때 `localhost`는 mcproxy 컨테이너 자신을 가리킵니다. 다른 컨테이너는 Compose 서비스 이름을, 호스트에서 실행 중인 백엔드는 컨테이너에서 도달 가능한 호스트 주소를 upstream으로 등록하십시오.
+- 연결 실패 시 `gate_backend_rejected_player` 로그의 `reason` 및 `upstream` 필드에서 백엔드 거부 사유를 확인할 수 있습니다.
+
 HTTP API 설계(요약)
 
 기본 원칙
@@ -158,6 +167,8 @@ GeoLite2 사용 안내
 - HTTP API는 신뢰할 수 있는 네트워크 내에서만 노출하십시오.
 - API 앞단에 리버스 프록시를 두고 인증/인가, 속도 제한, 감사 로깅을 적용하십시오.
 - 관리자 토큰은 주기적으로 교체하고, 최소 권한 원칙을 준수하십시오.
+- 별도 SvelteKit 3+·TailwindCSS 패널을 브라우저에서 직접 연결할 경우 `MCPROXY_ADMIN_ALLOWED_ORIGINS`에 정확한 HTTPS Origin만 등록하십시오. 권장 방식은 패널 서버 라우트가 토큰을 보관하고 mcproxy API를 프록시하는 것입니다.
+- `/health`는 liveness, `/ready`는 DB readiness, `/metrics`는 Prometheus 호환 기본 지표를 제공합니다.
 
 성능 및 운영 팁
 

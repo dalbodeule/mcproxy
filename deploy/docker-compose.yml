@@ -1,0 +1,53 @@
+services:
+  mcproxy:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      MCPROXY_HTTP_ADDR: 0.0.0.0:8080
+      MCPROXY_GATE_BIND: 0.0.0.0:25565
+      MCPROXY_DB_DRIVER: postgres
+      MCPROXY_POSTGRES_DSN: postgres://mcproxy:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/mcproxy?sslmode=disable
+      MCPROXY_REDIS_ADDR: redis:6379
+      MCPROXY_SQLITE_PATH: /data/mcproxy.db
+    ports:
+      - "25565:25565"
+    expose:
+      - "8080"
+    volumes:
+      - mcproxy-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  postgres:
+    image: postgres:18-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mcproxy
+      POSTGRES_USER: mcproxy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mcproxy -d mcproxy"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+
+volumes:
+  mcproxy-data:
+  postgres-data:
+  redis-data:

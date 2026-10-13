@@ -46,6 +46,7 @@ type Stats struct {
 type ServerInput struct {
 	Name       string  `json:"name"`
 	PublicHost *string `json:"public_host,omitempty"`
+	PublicAddr *string `json:"public_addr,omitempty"`
 	Upstream   string  `json:"upstream"`
 	Priority   *int    `json:"priority,omitempty"`
 	Enabled    *bool   `json:"enabled,omitempty"`
@@ -55,6 +56,7 @@ type ServerDTO struct {
 	ID         int       `json:"id"`
 	Name       string    `json:"name"`
 	PublicHost string    `json:"public_host,omitempty"`
+	PublicAddr string    `json:"public_addr,omitempty"`
 	Upstream   string    `json:"upstream"`
 	Priority   int       `json:"priority"`
 	Enabled    bool      `json:"enabled"`
@@ -274,6 +276,15 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	return Stats{UptimeSeconds: int64(up), Servers: servers, Policies: policies, Rules: rules, Counters: counters, Blocks: int64(blocked)}, nil
 }
 
+// Health verifies that the backing database is reachable. It is intentionally
+// separate from Stats so readiness checks do not enumerate application tables.
+func (s *Store) Health(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return errors.New("store is not initialized")
+	}
+	return s.db.PingContext(ctx)
+}
+
 func (s *Store) ListServers(ctx context.Context) ([]ServerDTO, error) {
 	nodes, err := s.client.Server.Query().Order(ent.Asc(server.FieldID)).All(ctx)
 	if err != nil {
@@ -296,9 +307,15 @@ func (s *Store) GetServer(ctx context.Context, id int) (*ServerDTO, error) {
 }
 
 func (s *Store) CreateServer(ctx context.Context, in ServerInput) (*ServerDTO, error) {
+	if err := validateServerInput(in, true); err != nil {
+		return nil, err
+	}
 	b := s.client.Server.Create().SetName(strings.TrimSpace(in.Name)).SetUpstream(strings.TrimSpace(in.Upstream))
 	if in.PublicHost != nil {
 		b.SetPublicHost(strings.ToLower(strings.TrimSpace(*in.PublicHost)))
+	}
+	if in.PublicAddr != nil {
+		b.SetPublicAddr(strings.TrimSpace(*in.PublicAddr))
 	}
 	if in.Priority != nil {
 		b.SetPriority(*in.Priority)
@@ -317,6 +334,9 @@ func (s *Store) CreateServer(ctx context.Context, in ServerInput) (*ServerDTO, e
 }
 
 func (s *Store) UpdateServer(ctx context.Context, id int, in ServerInput) (*ServerDTO, error) {
+	if err := validateServerInput(in, false); err != nil {
+		return nil, err
+	}
 	b := s.client.Server.UpdateOneID(id)
 	if v := strings.TrimSpace(in.Name); v != "" {
 		b.SetName(v)
@@ -326,6 +346,9 @@ func (s *Store) UpdateServer(ctx context.Context, id int, in ServerInput) (*Serv
 	}
 	if in.PublicHost != nil {
 		b.SetPublicHost(strings.ToLower(strings.TrimSpace(*in.PublicHost)))
+	}
+	if in.PublicAddr != nil {
+		b.SetPublicAddr(strings.TrimSpace(*in.PublicAddr))
 	}
 	if in.Priority != nil {
 		b.SetPriority(*in.Priority)
@@ -357,6 +380,9 @@ func (s *Store) GetGlobalPolicy(ctx context.Context) (*PolicyDTO, error) {
 }
 
 func (s *Store) UpsertGlobalPolicy(ctx context.Context, in PolicyInput) (*PolicyDTO, error) {
+	if err := validatePolicyInput(in); err != nil {
+		return nil, err
+	}
 	current, err := s.client.AccessPolicy.Query().Where(accesspolicy.Not(accesspolicy.HasServer())).First(ctx)
 	if err != nil && !ent.IsNotFound(err) {
 		return nil, err
@@ -401,6 +427,9 @@ func (s *Store) GetServerPolicy(ctx context.Context, serverID int) (*PolicyDTO, 
 }
 
 func (s *Store) UpsertServerPolicy(ctx context.Context, serverID int, in PolicyInput) (*PolicyDTO, error) {
+	if err := validatePolicyInput(in); err != nil {
+		return nil, err
+	}
 	if _, err := s.client.Server.Get(ctx, serverID); err != nil {
 		return nil, err
 	}
@@ -604,7 +633,40 @@ func serverDTO(n *ent.Server) ServerDTO {
 	if n.PublicHost != nil && strings.TrimSpace(*n.PublicHost) != "" {
 		publicHost = strings.TrimSpace(*n.PublicHost)
 	}
-	return ServerDTO{ID: n.ID, Name: n.Name, PublicHost: publicHost, Upstream: n.Upstream, Priority: n.Priority, Enabled: n.Enabled, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt}
+	publicAddr := ""
+	if n.PublicAddr != nil {
+		publicAddr = strings.TrimSpace(*n.PublicAddr)
+	}
+	return ServerDTO{ID: n.ID, Name: n.Name, PublicHost: publicHost, PublicAddr: publicAddr, Upstream: n.Upstream, Priority: n.Priority, Enabled: n.Enabled, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt}
+}
+
+func validateServerInput(in ServerInput, create bool) error {
+	if create && strings.TrimSpace(in.Name) == "" {
+		return fmt.Errorf("name is required")
+	}
+	if create && strings.TrimSpace(in.Upstream) == "" {
+		return fmt.Errorf("upstream is required")
+	}
+	if strings.TrimSpace(in.Name) != "" && len([]rune(strings.TrimSpace(in.Name))) > 128 {
+		return fmt.Errorf("name is too long")
+	}
+	if strings.TrimSpace(in.Upstream) != "" {
+		if _, _, err := net.SplitHostPort(strings.TrimSpace(in.Upstream)); err != nil {
+			return fmt.Errorf("upstream must be host:port")
+		}
+	}
+	if in.PublicHost != nil && strings.TrimSpace(*in.PublicHost) != "" {
+		host := strings.TrimSpace(*in.PublicHost)
+		if strings.ContainsAny(host, "/?#@") || net.ParseIP(host) != nil {
+			return fmt.Errorf("invalid public_host")
+		}
+	}
+	if in.PublicAddr != nil && strings.TrimSpace(*in.PublicAddr) != "" {
+		if _, _, err := net.SplitHostPort(strings.TrimSpace(*in.PublicAddr)); err != nil {
+			return fmt.Errorf("public_addr must be host:port")
+		}
+	}
+	return nil
 }
 
 func policyDTO(scope string, n *ent.AccessPolicy) PolicyDTO {
@@ -720,6 +782,32 @@ func validateRuleInput(in RuleInput) error {
 		} else if net.ParseIP(strings.TrimSpace(in.Target)) == nil {
 			return fmt.Errorf("invalid ip target")
 		}
+	}
+	return nil
+}
+
+func validatePolicyInput(in PolicyInput) error {
+	for name, value := range map[string]*int{
+		"ip_burst_10s":   in.IPBurst10s,
+		"ip_burst_60s":   in.IPBurst60s,
+		"name_burst_10s": in.NameBurst10s,
+		"name_burst_60s": in.NameBurst60s,
+	} {
+		if value != nil && (*value < 0 || *value > 1_000_000) {
+			return fmt.Errorf("%s must be between 0 and 1000000", name)
+		}
+	}
+	if in.KickMessage != nil && len([]rune(*in.KickMessage)) > 512 {
+		return fmt.Errorf("kick_message is too long")
+	}
+	if in.GeoMode != nil {
+		mode := strings.ToLower(strings.TrimSpace(*in.GeoMode))
+		if mode != "disabled" && mode != "allow" && mode != "deny" {
+			return fmt.Errorf("invalid geo mode")
+		}
+	}
+	if in.GeoList != nil && len(in.GeoList) > 256 {
+		return fmt.Errorf("geo_list is too large")
 	}
 	return nil
 }

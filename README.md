@@ -41,6 +41,14 @@ Container
 
 - Build image: `docker build -t mcproxy .`
 - Base runtime image: [`gcr.io/distroless/base-debian13:nonroot`](Dockerfile:12)
+- Builder uses Go 1.27 (`go.mod` and `Dockerfile`).
+
+Backend forwarding
+
+- `MCPROXY_GATE_FORWARDING_MODE` accepts `none`, `legacy`, `velocity`, or `bungeeguard` (default: `legacy`).
+- For Paper/Spigot with legacy forwarding, set backend `online-mode=false` and `settings.bungeecord=true`; firewall the backend so clients cannot bypass mcproxy.
+- For Velocity forwarding, configure the same secret on Gate and the backend's Velocity forwarding support.
+- In Docker, `localhost` refers to the mcproxy container. Use the other container's service name or a host address reachable from the container for the backend upstream.
 
 Environment
 
@@ -49,12 +57,22 @@ Environment
   - `MCPROXY_HTTP_ADDR`
   - `MCPROXY_GATE_BIND`
   - `MCPROXY_GATE_ONLINE_MODE`
+  - `MCPROXY_GATE_FORWARDING_MODE`
+  - `MCPROXY_GATE_VELOCITY_SECRET` (when using Velocity forwarding)
   - `MCPROXY_DB_DRIVER`
   - `MCPROXY_POSTGRES_DSN`
   - `MCPROXY_REDIS_ADDR`
   - `MCPROXY_REDIS_CHANNEL`
   - `MCPROXY_GEOIP_PATH`
   - `MCPROXY_ADMIN_TOKEN`
+  - `MCPROXY_ADMIN_ALLOWED_ORIGINS` (optional exact origins for the separate admin panel)
+
+Operations
+
+- `GET /health` is a liveness check; `GET /ready` verifies database readiness.
+- `GET /metrics` exposes a small Prometheus-compatible set of process and policy metrics.
+- The separate SvelteKit 3+ / TailwindCSS admin panel should keep the token server-side and proxy API requests through its server routes. If browser requests go directly to mcproxy, configure `MCPROXY_ADMIN_ALLOWED_ORIGINS` with exact HTTPS origins.
+- Use PostgreSQL and Redis for multi-instance production; SQLite is for single-instance deployments.
 
 Quick Links
 

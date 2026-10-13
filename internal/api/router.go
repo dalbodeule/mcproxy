@@ -3,6 +3,8 @@ package api
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -34,6 +36,7 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 		middleware.Timeout(60*time.Second),
 		observability.RequestLogger,
 		securityHeaders,
+		cors(cfg.AdminAllowedOrigins),
 	)
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -41,6 +44,32 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 			"status": "ok",
 			"time":   time.Now().UTC().Format(time.RFC3339Nano),
 		})
+	})
+	r.Get("/ready", func(w http.ResponseWriter, r *http.Request) {
+		if deps.Store == nil || deps.Store.Health(r.Context()) != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "not_ready"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ready"})
+	})
+	r.Get("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		if deps.Store == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		st, err := deps.Store.Stats(r.Context())
+		if err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		_, _ = io.WriteString(w, "# HELP mcproxy_uptime_seconds Process uptime in seconds.\n# TYPE mcproxy_uptime_seconds gauge\n")
+		_, _ = io.WriteString(w, "mcproxy_uptime_seconds "+strconv.FormatInt(st.UptimeSeconds, 10)+"\n")
+		_, _ = io.WriteString(w, "# TYPE mcproxy_servers gauge\nmcproxy_servers "+strconv.Itoa(st.Servers)+"\n")
+		_, _ = io.WriteString(w, "# TYPE mcproxy_policies gauge\nmcproxy_policies "+strconv.Itoa(st.Policies)+"\n")
+		_, _ = io.WriteString(w, "# TYPE mcproxy_rules gauge\nmcproxy_rules "+strconv.Itoa(st.Rules)+"\n")
+		_, _ = io.WriteString(w, "# TYPE mcproxy_counters gauge\nmcproxy_counters "+strconv.Itoa(st.Counters)+"\n")
+		_, _ = io.WriteString(w, "# TYPE mcproxy_blocks_total counter\nmcproxy_blocks_total "+strconv.FormatInt(st.Blocks, 10)+"\n")
 	})
 
 	r.Route("/api/v1", func(api chi.Router) {
@@ -310,6 +339,38 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+func cors(allowed []string) func(http.Handler) http.Handler {
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, origin := range allowed {
+		allowedSet[origin] = struct{}{}
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			if _, ok := allowedSet[origin]; ok {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Add("Vary", "Origin")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Token")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Max-Age", "600")
+			}
+			if r.Method == http.MethodOptions {
+				if origin == "" {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				if _, ok := allowedSet[origin]; !ok {
+					writeJSON(w, http.StatusForbidden, map[string]any{"error": "origin not allowed"})
+					return
+				}
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func limitBody(n int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -332,7 +393,17 @@ func decodeJSON(r *http.Request, dst any) error {
 	defer r.Body.Close()
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	return dec.Decode(dst)
+	if err := dec.Decode(dst); err != nil {
+		return err
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("request body must contain one JSON value")
+		}
+		return err
+	}
+	return nil
 }
 
 func pathInt(w http.ResponseWriter, r *http.Request, name string) (int, bool) {

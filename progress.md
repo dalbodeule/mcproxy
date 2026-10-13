@@ -81,6 +81,14 @@
 
 ## 현재 남은 핵심 작업
 
+### 운영 보강 반영
+- [x] 설정 로그에서 DSN/비밀번호 노출 방지
+- [x] `/ready` DB readiness와 기본 Prometheus `/metrics` 추가
+- [x] 엄격한 JSON 단일 값 디코딩, 서버 upstream/public address 및 정책 입력 검증
+- [x] 별도 관리패널 연결용 exact-origin CORS 설정
+- [x] nonroot 컨테이너의 SQLite 쓰기 경로(`/data`)와 PostgreSQL/Redis Compose 스택
+- [x] 별도 SvelteKit 3+·TailwindCSS 패널의 서버사이드 프록시 운영 지침
+
 ### 1) Gate 데이터 플레인 고도화
 - 현재 Gate 연동은 [`PreLoginEvent`](internal/gate/runtime.go:69), [`PingEvent`](internal/gate/runtime.go:87), 초기 서버 선택 중심이다.
 - 현재 구조는 `client -> public address -> gate -> backend upstream` 중 마지막 프록시 단계는 가능하지만,

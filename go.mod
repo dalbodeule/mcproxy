@@ -1,10 +1,11 @@
 module mcproxy
 
-go 1.26
+go 1.27
 
 require (
 	entgo.io/ent v0.14.6 // ORM (codegen)
 	github.com/go-chi/chi/v5 v5.2.5 // HTTP router
+	github.com/go-logr/logr v1.4.3
 	github.com/jackc/pgx/v5 v5.9.1 // PostgreSQL driver core
 	github.com/oschwald/geoip2-golang v1.13.0 // GeoIP reader
 	modernc.org/sqlite v1.49.1 // SQLite (pure Go)
@@ -43,7 +44,6 @@ require (
 	github.com/go-kit/kit v0.10.0 // indirect
 	github.com/go-kit/log v0.2.1 // indirect
 	github.com/go-logfmt/logfmt v0.5.1 // indirect
-	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/inflect v0.19.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
