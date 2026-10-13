@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"time"
 
@@ -16,11 +17,15 @@ type distributedCoordinator struct {
 	cancel  context.CancelFunc
 }
 
-func newDistributedCoordinator(ctx context.Context, addr, channel string, onInvalidate func()) (*distributedCoordinator, error) {
+func newDistributedCoordinator(ctx context.Context, addr, password string, useTLS bool, channel string, onInvalidate func()) (*distributedCoordinator, error) {
 	if addr == "" {
 		return nil, nil
 	}
-	rdb := redis.NewClient(&redis.Options{Addr: addr})
+	options := &redis.Options{Addr: addr, Password: password}
+	if useTLS {
+		options.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	rdb := redis.NewClient(options)
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		return nil, err
 	}
@@ -64,12 +69,13 @@ func (d *distributedCoordinator) IncrWindow(ctx context.Context, scope string, s
 	}
 	redisKey := fmt.Sprintf("%s%s:%d:%s:%s:%d", redisCounterPrefix, scope, serverIDValue(serverID), kind, key, windowSec)
 	if record {
-		val, err := d.redis.Incr(ctx, redisKey).Result()
-		if err != nil {
+		pipe := d.redis.TxPipeline()
+		incr := pipe.Incr(ctx, redisKey)
+		pipe.Expire(ctx, redisKey, time.Duration(windowSec)*time.Second)
+		if _, err := pipe.Exec(ctx); err != nil {
 			return 0, err
 		}
-		_ = d.redis.Expire(ctx, redisKey, time.Duration(windowSec)*time.Second).Err()
-		return int(val), nil
+		return int(incr.Val()), nil
 	}
 	val, err := d.redis.Get(ctx, redisKey).Int()
 	if err == redis.Nil {

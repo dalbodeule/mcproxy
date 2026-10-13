@@ -22,6 +22,12 @@ const (
 	FieldPublicAddr = "public_addr"
 	// FieldUpstream holds the string denoting the upstream field in the database.
 	FieldUpstream = "upstream"
+	// FieldForwardingMode holds the string denoting the forwarding_mode field in the database.
+	FieldForwardingMode = "forwarding_mode"
+	// FieldPingMotd holds the string denoting the ping_motd field in the database.
+	FieldPingMotd = "ping_motd"
+	// FieldBungeeguardAllowedToken holds the string denoting the bungeeguard_allowed_token field in the database.
+	FieldBungeeguardAllowedToken = "bungeeguard_allowed_token"
 	// FieldPriority holds the string denoting the priority field in the database.
 	FieldPriority = "priority"
 	// FieldEnabled holds the string denoting the enabled field in the database.
@@ -77,6 +83,9 @@ var Columns = []string{
 	FieldPublicHost,
 	FieldPublicAddr,
 	FieldUpstream,
+	FieldForwardingMode,
+	FieldPingMotd,
+	FieldBungeeguardAllowedToken,
 	FieldPriority,
 	FieldEnabled,
 	FieldCreatedAt,
@@ -98,6 +107,12 @@ var (
 	NameValidator func(string) error
 	// UpstreamValidator is a validator for the "upstream" field. It is called by the builders before save.
 	UpstreamValidator func(string) error
+	// DefaultForwardingMode holds the default value on creation for the "forwarding_mode" field.
+	DefaultForwardingMode string
+	// DefaultPingMotd holds the default value on creation for the "ping_motd" field.
+	DefaultPingMotd string
+	// DefaultBungeeguardAllowedToken holds the default value on creation for the "bungeeguard_allowed_token" field.
+	DefaultBungeeguardAllowedToken string
 	// DefaultPriority holds the default value on creation for the "priority" field.
 	DefaultPriority int
 	// DefaultEnabled holds the default value on creation for the "enabled" field.
@@ -136,6 +151,21 @@ func ByPublicAddr(opts ...sql.OrderTermOption) OrderOption {
 // ByUpstream orders the results by the upstream field.
 func ByUpstream(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldUpstream, opts...).ToFunc()
+}
+
+// ByForwardingMode orders the results by the forwarding_mode field.
+func ByForwardingMode(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldForwardingMode, opts...).ToFunc()
+}
+
+// ByPingMotd orders the results by the ping_motd field.
+func ByPingMotd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPingMotd, opts...).ToFunc()
+}
+
+// ByBungeeguardAllowedToken orders the results by the bungeeguard_allowed_token field.
+func ByBungeeguardAllowedToken(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldBungeeguardAllowedToken, opts...).ToFunc()
 }
 
 // ByPriority orders the results by the priority field.

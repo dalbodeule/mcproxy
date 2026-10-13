@@ -18,6 +18,12 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(runHealthcheck())
+	}
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		os.Exit(runMigration())
+	}
 	cfg := config.LoadFromEnv()
 	if err := observability.Init(cfg.LokiHost, cfg.LogIdentify); err != nil {
 		_, _ = os.Stderr.WriteString("failed to initialize logger: " + err.Error() + "\n")
@@ -43,17 +49,27 @@ func main() {
 		}
 	}
 
-	router := api.NewRouter(cfg, api.Dependencies{Store: st, Geo: geoSvc})
-
 	gateRuntime, err := gateapp.New(context.Background(), gateapp.Options{
 		Bind:       cfg.GateBind,
 		OnlineMode: cfg.GateOnlineMode,
 		Store:      st,
+		Geo:        geoSvc,
 		Config:     cfg,
 	})
 	if err != nil {
 		observability.Warn("gate_init_skipped", "error", err)
 	}
+	gateReady := func() bool { return false }
+	if gateRuntime != nil {
+		gateReady = gateRuntime.Ready
+	}
+	gateStats := func() (players, backends int) { return 0, 0 }
+	if gateRuntime != nil {
+		gateStats = func() (players, backends int) {
+			return gateRuntime.PlayerCount(), gateRuntime.BackendCount()
+		}
+	}
+	router := api.NewRouter(cfg, api.Dependencies{Store: st, Geo: geoSvc, GateReady: gateReady, GateStats: gateStats})
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -68,6 +84,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	errCh := make(chan error, 1)
+	var gateDone chan struct{}
 
 	ln, err := net.Listen("tcp", cfg.HTTPAddr)
 	if err != nil {
@@ -82,7 +99,9 @@ func main() {
 	}()
 
 	if gateRuntime != nil {
+		gateDone = make(chan struct{})
 		go func() {
+			defer close(gateDone)
 			if err := gateRuntime.Start(ctx); err != nil {
 				errCh <- err
 			}
@@ -106,4 +125,43 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		observability.Error("http_server_shutdown_error", "error", err)
 	}
+	if gateDone != nil {
+		select {
+		case <-gateDone:
+		case <-shutdownCtx.Done():
+			observability.Warn("gate_shutdown_timeout")
+		}
+	}
+}
+
+func runMigration() int {
+	cfg := config.LoadFromEnv()
+	if err := store.Migrate(context.Background(), cfg); err != nil {
+		_, _ = os.Stderr.WriteString("mcproxy migration failed: " + err.Error() + "\n")
+		return 1
+	}
+	_, _ = os.Stdout.WriteString("mcproxy database migration complete\n")
+	return 0
+}
+
+func runHealthcheck() int {
+	url := os.Getenv("MCPROXY_HEALTHCHECK_URL")
+	if url == "" {
+		url = "http://127.0.0.1:8080/ready"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 1
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return 1
+	}
+	return 0
 }

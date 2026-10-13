@@ -1,0 +1,46 @@
+groups:
+  - name: mcproxy
+    rules:
+      - alert: McproxyGateNotReady
+        expr: mcproxy_gate_ready == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: mcproxy Gate data plane is not ready
+          description: The HTTP process is reachable but the Gate listener is not running.
+      - alert: McproxyTargetDown
+        expr: up{job="mcproxy"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "mcproxy metrics target is down"
+          description: "Prometheus cannot scrape the mcproxy metrics endpoint for 2 minutes."
+
+      - alert: McproxyNoEnabledServers
+        expr: mcproxy_enabled_servers == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "mcproxy has no registered backend servers"
+          description: "No backend servers are registered or enabled for 5 minutes."
+
+      - alert: McproxyGateNoBackends
+        expr: mcproxy_gate_ready == 1 and mcproxy_gate_backends == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "mcproxy Gate is ready but has no registered backends"
+          description: "The Gate listener is running, but no backend is available for new Minecraft connections."
+
+      - alert: McproxyHighBlockRate
+        expr: rate(mcproxy_blocks_total[5m]) > 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "mcproxy block rate is elevated"
+          description: "mcproxy is blocking more than 10 connection attempts per second over 10 minutes."

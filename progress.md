@@ -88,68 +88,113 @@
 - [x] 별도 관리패널 연결용 exact-origin CORS 설정
 - [x] nonroot 컨테이너의 SQLite 쓰기 경로(`/data`)와 PostgreSQL/Redis Compose 스택
 - [x] 별도 SvelteKit 3+·TailwindCSS 패널의 서버사이드 프록시 운영 지침
+- [x] 독립 `admin-panel/` 앱: 대시보드, 서버 등록/활성화/비활성화/삭제, API reverse proxy
+- [x] 감사로그 목록 API와 관리패널 최근 감사 이벤트 화면
+- [x] 관리패널 전역 임계값·Geo 정책·Allow/Deny 룰 CRUD 화면
+- [x] 관리패널 서버별 Geo 정책·Allow/Deny 룰 CRUD 화면
+- [x] 관리패널 자체 로그인, 서명 세션 쿠키, 로그아웃 및 API proxy 보호
+- [x] 서버별 정책 편집, 감사로그 이벤트 필터·페이지네이션, 차단 사유별 Prometheus 지표
+- [x] 관리자 CRUD와 Gate 연결/해제/백엔드 거부 이벤트의 감사 기록
+- [x] 서버 삭제 시 정책·룰·카운터를 트랜잭션으로 정리하고 감사 이력은 보존
+- [x] distroless용 바이너리 healthcheck와 Go·관리패널·Compose GitHub Actions CI
+- [x] 별도 SvelteKit 관리패널 컨테이너 bind 설정과 로그인 페이지 healthcheck
+- [x] 외부 PostgreSQL/Redis와 Secret 주입을 전제로 한 Kubernetes 배포 템플릿
+- [x] Kubernetes 관리 API·메트릭 내부 접근 및 패널 ingress 제한 NetworkPolicy 예시
+- [x] 확인 토큰을 요구하는 PostgreSQL custom-format 복구 스크립트 및 runbook 연결
+- [x] Go/npm/Docker/GitHub Actions 의존성 자동 업데이트 설정(Dependabot)
+- [x] 관리패널 기본 보안 응답 헤더(X-Frame-Options, nosniff, Referrer-Policy, Permissions-Policy)
+- [x] CI에서 전체 Go race test 수행
+- [x] SIGTERM 시 HTTP와 Gate 종료를 함께 기다리는 graceful shutdown 경로
+- [x] 백엔드 0개 상태에서도 Gate를 유지해 관리패널의 재활성화를 자동 반영
+- [x] Gate upstream 동기화 전 사전 해석으로 잘못된 신규 설정이 기존 라우팅을 깨뜨리지 않도록 보호
+- [x] 독립 Docker 실행 시 HTTP 외부 바인드 및 `/data/mcproxy.db` 기본 경로 보정
+- [x] `/ready`가 DB뿐 아니라 Gate 데이터 플레인 기동 상태도 반영
+- [x] Gate readiness Prometheus 지표 및 비정상 알림 규칙 추가
+- [x] 실제 Minecraft Status Handshake/Ping 컨테이너 E2E smoke test 및 CI 타깃 추가
+- [x] 로컬 카운터의 만료 버킷 정리 및 메모리 누수 회귀 테스트
+- [x] 평가 요청·룰 target 입력 길이 제한으로 메모리/Redis 키 남용 방지
+- [x] Redis 분산 카운터의 INCR/EXPIRE 원자적 처리
+- [x] Compose의 로컬 `.env` 의존성을 선택적으로 변경해 CI/신규 호스트 검증 개선
+- [x] PostgreSQL/Redis 포함 Compose 기동 및 readiness smoke test 타깃/CI 추가
+- [x] PostgreSQL custom-format 백업→별도 DB 복구→fixture 검증 smoke 및 CI 타깃 추가
+- [x] Compose smoke를 전용 override/고유 프로젝트로 격리해 운영 포트·볼륨 충돌 방지
+- [x] 별도 관리패널 이미지 런타임·로그인 endpoint·보안 헤더 smoke test 타깃/CI 추가
+- [x] 서버별 BungeeGuard allowed-token 자동 발급·회전 API 및 관리패널 추가
+- [x] 공식 BungeeGuard 설정 키(`allowed-tokens`)와 reload 절차를 문서·관리패널에 반영
+- [x] 서버별 `forwarding_mode`로 BungeeGuard/legacy/none 전달 방식을 독립 설정하고 Ent migration·API·관리패널에 연결
+- [x] Redis/local control-plane invalidation을 Gate backend 즉시 동기화에 연결하고 5초 polling을 recovery path로 유지
+- [x] `mcproxy migrate` 명령과 운영 백업→마이그레이션→readiness runbook 추가
+- [x] 배포 이미지 내부 `mcproxy migrate` migration smoke 검증을 CI에 추가
+- [x] Kubernetes `/data`를 `emptyDir`에서 PersistentVolumeClaim으로 변경
+- [x] Go 1.27 `encoding/json`와 Minecraft component reason 충돌로 인한 감사 로그 panic 차단
+- [x] Minecraft 26.3(protocol 777) Gate 로그인 hello 회귀 대응 및 재배포 문서화
+- [x] PostgreSQL Compose smoke에서 발견된 pgx/database-sql 드라이버명 불일치 수정
 
 ### 1) Gate 데이터 플레인 고도화
-- 현재 Gate 연동은 [`PreLoginEvent`](internal/gate/runtime.go:69), [`PingEvent`](internal/gate/runtime.go:87), 초기 서버 선택 중심이다.
-- 현재 구조는 `client -> public address -> gate -> backend upstream` 중 마지막 프록시 단계는 가능하지만,
-  `public address/hostname` 별로 서로 다른 내부 upstream을 고르는 라우팅 계층은 아직 미구현이다.
+- 현재 Gate 연동은 [`PreLoginEvent`](internal/gate/runtime.go:69), [`PingEvent`](internal/gate/runtime.go:87), 초기 서버 선택과 연결 lifecycle 감사 이벤트를 지원한다.
+- `public address/hostname -> backend upstream` 라우팅, 서버별 정책 평가와 우선순위 기반 초기 서버 선택이 구현되어 있다.
 - 다음 작업:
-  - Login 이후 단계 차단/허용 로직 추가
-  - 서버 전환 이후(PostConnect 계열) 검증 로직 추가
-  - 접속 성공/실패에 대한 감사 로그 세분화
-  - 서버 동기화를 polling 기반에서 이벤트 기반 또는 더 정교한 방식으로 개선
-  - public address/hostname 기반 upstream 선택 로직 추가
+  - [x] Login 이후 단계 차단/허용 로직 추가
+  - [x] 서버 전환 이전(ServerPreConnect) 서버별 정책·Geo 검증 추가
+  - [x] 접속 성공/실패 및 백엔드 거부 감사 로그 세분화
+  - [x] 서버 동기화를 control-plane invalidation 이벤트 기반으로 개선하고 5초 polling을 recovery path로 유지
+  - [x] Redis를 사용하는 다중 Gate 인스턴스에서 서버 목록/라우팅 변경을 즉시 동기화
 
 #### 현재 테스트 상태
 - [x] Gate 최소 통합 테스트 추가: [internal/gate/runtime_test.go](internal/gate/runtime_test.go)
-  - 빈 서버 목록일 때 초기화 실패 검증
+  - 빈 서버 목록에서 idle runtime으로 기동하고 이후 백엔드 추가를 동기화하는 검증
   - backend 서버 등록 후 [`syncServers()`](internal/gate/runtime.go:135), [`pickInitialServer()`](internal/gate/runtime.go:203) 검증
 
 ### 2) 정책 관리 API 고도화
-- 현재 서버별 정책 API와 Geo 정책 API의 조회/업서트는 완료되었다.
+- 현재 서버별 정책 API와 Geo 정책 API의 조회/업서트 및 Gate 평가 연결이 완료되었다.
 - 남은 작업:
-  - [ ] 서버별 정책 삭제/초기화 API 추가
-  - [ ] Geo 정책 삭제/초기화 API 추가
-  - [ ] Gate 서버 선택 시 서버별 정책이 실제 적용되도록 연결 고도화
+  - [x] Gate 서버 선택/전환 lifecycle 전체에 대한 E2E 검증: 실제 TCP backend 2개와 Minecraft handshake/login으로 hostname별 초기 서버 선택 및 오선택 방지를 검증
 
 ### 3) Public address / hostname 라우팅 계층 추가
 - 목표 구조:
   - `client -(public address)-> gate -(internal/private/unknown upstream)-> minecraft server`
 - 필요한 작업:
-  - [ ] 서버 엔티티 또는 별도 라우팅 엔티티에 `public_host` / `public_addr` / `priority` / `enabled` 필드 도입
-  - [ ] Gate에서 [`VirtualHost`](internal/gate/runtime.go:87) 기준으로 backend upstream을 선택하는 라우터 추가
-  - [ ] 관리 API에서 public address → upstream 매핑 CRUD 제공
-  - [ ] Ping 응답도 hostname 기준으로 다르게 구성
+  - [x] 서버 엔티티에 `public_host` / `public_addr` / `priority` / `enabled` 필드 도입
+  - [x] Gate에서 [`VirtualHost`](internal/gate/runtime.go:87) 기준으로 backend upstream을 선택하는 라우터 추가
+  - [x] 관리 API에서 public address → upstream 매핑 CRUD 제공
+- [x] 서버별 `ping_motd`를 저장하고 hostname 기준 Ping 응답에 반영
 
 ### 4) 카운터 정밀도 고도화
-- 현재 [`bucketCounter`](internal/store/counter_engine.go:9)는 초안 수준 구현이다.
+- 현재 [`bucketCounter`](internal/store/counter_engine.go:9)는 버킷 기반 카운터이며 만료 키 정리까지 구현되어 있다.
 - 다음 작업:
   - 더 세밀한 슬라이딩 윈도우 구현
-  - 키 만료/정리 정책
+  - [x] 키 만료/정리 정책
   - Redis 분산 카운터와 로컬 카운터의 일관성 전략 문서화
 
 ### 5) 테스트 확충
-- 현재 빌드 검증 중심이며 테스트는 거의 없다.
+- Go 단위/통합 테스트와 HTTP/Gate 기본 통합 테스트가 구성되어 있다.
 - 우선순위 높은 테스트:
   - [x] [`matchRule()`](internal/store/store.go:708), [`matchRules()`](internal/store/store.go:689), [`evaluateThresholds()`](internal/store/store.go:725), [`evaluateGeoPolicy()`](internal/store/store.go:741), [`normalizeCountryCodes()`](internal/store/store.go:639) 단위 테스트 추가: [internal/store/store_test.go](internal/store/store_test.go)
-  - [ ] [`EvaluateAttempt()`](internal/store/store.go:420) 저장소/캐시/카운터 통합 단위 테스트
+  - [x] [`EvaluateAttempt()`](internal/store/store.go:420) 저장소/캐시/카운터 통합 단위 테스트
   - [x] HTTP API 통합 테스트 추가: [internal/api/router_test.go](internal/api/router_test.go)
   - [x] Gate 최소 통합 테스트 추가: [internal/gate/runtime_test.go](internal/gate/runtime_test.go)
-  - [ ] Gate 연동 E2E 테스트
+  - [x] Gate Status handshake/Ping 컨테이너 E2E 테스트
   - [x] 테스트 헬퍼/fixture 공통화: [internal/testutil/testenv.go](internal/testutil/testenv.go)
 
 ### 6) 운영형 배포 정리
-- [Dockerfile](Dockerfile)은 추가됐지만 실운영 배포 세트는 아직 없다.
+- [Dockerfile](Dockerfile), Compose 운영 스택, 백업 스크립트와 runbook이 구성되어 있다.
 - 다음 작업:
-  - Docker Compose 또는 Kubernetes 매니페스트 초안
-  - PostgreSQL/Redis/Loki 포함 운영 스택 예시
-  - runbook 및 장애 대응 절차 문서화
+  - provider별 External SecretStore와 NetworkPolicy egress 규칙을 운영 클러스터에 맞게 연결
+  - [x] PostgreSQL 복구 훈련 자동화: `make postgres-restore-smoke`
 
 ### 7) 관측성 확장
-- [`internal/observability/logging.go`](internal/observability/logging.go)은 정리됐지만 메트릭은 아직 없다.
+- 기본 Prometheus `/metrics`와 차단 사유별 지표가 구현되어 있다.
 - 다음 작업:
-  - Prometheus 메트릭 익스포터
-  - 차단 사유별/서버별 지표 수집
+  - [x] Prometheus scrape 설정과 기본 장애/폭주 경보 규칙 추가
+  - [x] Compose mcproxy 서비스에 read-only rootfs, no-new-privileges, capability 최소화 적용
+- [x] 관리패널 로그아웃 POST-only 및 COOP/CORP/HSTS 조건부 보안 헤더 적용
+- [x] 민감 설정의 Docker/Kubernetes Secret 파일 주입(`*_FILE`) 지원 추가
+- [x] SvelteKit 관리패널도 API 토큰·로그인·세션 secret의 `*_FILE` 주입 지원
+- [x] Gate 현재 접속자 수와 등록 backend 수를 Prometheus metrics에 추가
+- [x] Gate ready 상태에서 backend 0개를 감지하는 Prometheus critical alert 추가
+- [x] 운영 Docker/Compose 기반 이미지를 검증된 digest로 고정해 재현 가능한 배포 구성
+- [x] Kubernetes workload의 불필요한 ServiceAccount 토큰 자동 마운트 차단 및 관리패널 PDB 추가
+- [x] 공급자 중립적인 External Secrets Operator 예시와 SecretStore 교체 절차 문서화
   - 알림 정책 및 보호 모드 자동 전환 설계
 
 ### 8) 코드 구조 리팩토링
@@ -179,7 +224,7 @@
   - 관리자 API는 별도 네트워크/VPN 뒤로 분리
   - ASN/Hosting Provider 차단, reputation feed 연동 검토
 - 관측성 및 운영 자동화
-  - 활성 연결 수, 차단 사유별 카운트, 서버별 QPS, 정책 캐시 hit ratio, DB latency 메트릭 추가
+  - 활성 연결 수, 서버별 QPS, 정책 캐시 hit ratio, DB latency 메트릭 추가
   - 경보 기준 정의 및 Adaptive threshold 검토
 - 안정성/복원력
   - fail-open/fail-close 정책 선택
@@ -187,18 +232,14 @@
   - drain/shutdown 전략 정교화
 
 ## 권장 다음 작업 순서
-1. Public address / hostname 기반 라우팅 계층 추가
-2. Gate 데이터 플레인에 서버별 정책 적용 고도화
-3. Ping 캐시 + hostname별 fallback 응답 완성
-4. Prometheus 메트릭 + 운영 배포 문서
-5. Store 책임 분리 리팩토링
+1. Prometheus 경보 규칙과 보호 모드 자동 전환 설계
+2. 외부 Secret Manager 및 네트워크 정책 운영 연계
+3. Store 책임 분리 리팩토링
 
 ## 지금 바로 먼저 시작할 작업
-- 1순위: `public address/hostname -> upstream` 매핑을 저장할 데이터 모델 정리
+- 1순위: Prometheus 경보와 보호 모드 자동 전환 설계
 - 이유:
-  - 현재 가장 큰 구조적 공백이 이 부분이다.
-  - 이 작업이 끝나야 Gate 초기 서버 선택, Ping 응답 분기, 서버별 정책 적용이 모두 자연스럽게 이어진다.
-  - 즉, [`internal/ent/schema/server.go`](internal/ent/schema/server.go) 또는 별도 라우팅 스키마부터 정리하는 것이 이후 작업의 기반이 된다.
+  - 관리 plane과 데이터 plane의 실제 연동을 배포 전 확인해야 한다.
 
 ## 단기 마일스톤(제안)
 - M1: ent 스키마(Servers/Policies/Rules/Counters/Audits)와 마이그레이션, /servers 및 /policy API 초안 완료 ✅
@@ -217,7 +258,9 @@
 - 운영 권장 기본값 예시는 [inc.env](inc.env) 기준으로 조정.
 - GeoLite2-City.mmdb 경로 설정: MCPROXY_GEOIP_PATH
 - 관리 API 인증 토큰: MCPROXY_ADMIN_TOKEN (미설정 시 /api/v1 비활성화)
+- 관리 API 인증 실패 제한: 소스 IP별 분당 20회 초과 시 429/Retry-After 응답
 - Redis 분산 동기화(선택): MCPROXY_REDIS_ADDR, MCPROXY_REDIS_CHANNEL
+- Redis 인증/TLS: MCPROXY_REDIS_PASSWORD, MCPROXY_REDIS_TLS 및 Compose 인증 healthcheck
 - Loki 로깅(선택): MCPROXY_LOKI_HOST, MCPROXY_LOG_IDENTIFY
 - Minekube Gate 바인드 및 온라인 모드: MCPROXY_GATE_BIND, MCPROXY_GATE_ONLINE_MODE
 - HTTP API 바인드: MCPROXY_HTTP_ADDR(기본 127.0.0.1:8080)

@@ -17,7 +17,10 @@ type Config struct {
 	GeoIPPath             string
 	AdminThrottle         int
 	AdminAllowedOrigins   []string
+	TrustProxyHeaders     bool
 	RedisAddr             string
+	RedisPassword         string
+	RedisTLS              bool
 	RedisChannel          string
 	LokiHost              string
 	LogIdentify           string
@@ -39,11 +42,14 @@ func LoadFromEnv() Config {
 	_ = godotenv.Load()
 
 	httpAddr := getenv("MCPROXY_HTTP_ADDR", "127.0.0.1:8080")
-	adminToken := getenv("MCPROXY_ADMIN_TOKEN", "")
+	adminToken := getenvSecret("MCPROXY_ADMIN_TOKEN")
 	geoPath := getenv("MCPROXY_GEOIP_PATH", "")
 	adminThrottle := getenvInt("MCPROXY_ADMIN_THROTTLE", 32)
 	adminAllowedOrigins := splitCSV(os.Getenv("MCPROXY_ADMIN_ALLOWED_ORIGINS"))
+	trustProxyHeaders := getenvBool("MCPROXY_TRUST_PROXY_HEADERS", false)
 	redisAddr := getenv("MCPROXY_REDIS_ADDR", "")
+	redisPassword := getenvSecret("MCPROXY_REDIS_PASSWORD")
+	redisTLS := getenvBool("MCPROXY_REDIS_TLS", false)
 	redisChannel := getenv("MCPROXY_REDIS_CHANNEL", "mcproxy:events")
 	lokiHost := getenv("MCPROXY_LOKI_HOST", "")
 	logIdentify := getenv("MCPROXY_LOG_IDENTIFY", "local")
@@ -54,8 +60,8 @@ func LoadFromEnv() Config {
 	gateBind := getenv("MCPROXY_GATE_BIND", "0.0.0.0:25565")
 	gateOnlineMode := getenvBool("MCPROXY_GATE_ONLINE_MODE", false)
 	gateForwardingMode := strings.ToLower(strings.TrimSpace(getenv("MCPROXY_GATE_FORWARDING_MODE", "legacy")))
-	gateVelocitySecret := getenv("MCPROXY_GATE_VELOCITY_SECRET", "")
-	gateBungeeGuardSecret := getenv("MCPROXY_GATE_BUNGEGUARD_SECRET", "")
+	gateVelocitySecret := getenvSecret("MCPROXY_GATE_VELOCITY_SECRET")
+	gateBungeeGuardSecret := getenvSecret("MCPROXY_GATE_BUNGEGUARD_SECRET")
 	driver := getenv("MCPROXY_DB_DRIVER", "sqlite")
 
 	var dsn string
@@ -63,7 +69,7 @@ func LoadFromEnv() Config {
 	case "sqlite":
 		dsn = sqliteDSN(getenv("MCPROXY_SQLITE_PATH", filepath.Join("data", "mcproxy.db")))
 	case "postgres":
-		dsn = getenv("MCPROXY_POSTGRES_DSN", "")
+		dsn = getenvSecret("MCPROXY_POSTGRES_DSN")
 	default:
 		dsn = sqliteDSN(filepath.Join("data", "mcproxy.db"))
 		driver = "sqlite"
@@ -75,7 +81,10 @@ func LoadFromEnv() Config {
 		GeoIPPath:             geoPath,
 		AdminThrottle:         adminThrottle,
 		AdminAllowedOrigins:   adminAllowedOrigins,
+		TrustProxyHeaders:     trustProxyHeaders,
 		RedisAddr:             redisAddr,
+		RedisPassword:         redisPassword,
+		RedisTLS:              redisTLS,
 		RedisChannel:          redisChannel,
 		LokiHost:              lokiHost,
 		LogIdentify:           logIdentify,
@@ -114,6 +123,24 @@ func getenv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// getenvSecret supports the conventional KEY_FILE form used by Docker and
+// Kubernetes Secret mounts. An explicitly supplied environment value wins so
+// local development and existing deployments remain backwards compatible.
+func getenvSecret(key string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	file := strings.TrimSpace(os.Getenv(key + "_FILE"))
+	if file == "" {
+		return ""
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 func getenvInt(key string, def int) int {

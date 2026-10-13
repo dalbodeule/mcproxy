@@ -3285,34 +3285,37 @@ func (m *RuleMutation) ResetEdge(name string) error {
 // ServerMutation represents an operation that mutates the Server nodes in the graph.
 type ServerMutation struct {
 	config
-	op              Op
-	typ             string
-	id              *int
-	name            *string
-	public_host     *string
-	public_addr     *string
-	upstream        *string
-	priority        *int
-	addpriority     *int
-	enabled         *bool
-	created_at      *time.Time
-	updated_at      *time.Time
-	clearedFields   map[string]struct{}
-	policies        map[int]struct{}
-	removedpolicies map[int]struct{}
-	clearedpolicies bool
-	rules           map[int]struct{}
-	removedrules    map[int]struct{}
-	clearedrules    bool
-	counters        map[int]struct{}
-	removedcounters map[int]struct{}
-	clearedcounters bool
-	audits          map[int]struct{}
-	removedaudits   map[int]struct{}
-	clearedaudits   bool
-	done            bool
-	oldValue        func(context.Context) (*Server, error)
-	predicates      []predicate.Server
+	op                        Op
+	typ                       string
+	id                        *int
+	name                      *string
+	public_host               *string
+	public_addr               *string
+	upstream                  *string
+	forwarding_mode           *string
+	ping_motd                 *string
+	bungeeguard_allowed_token *string
+	priority                  *int
+	addpriority               *int
+	enabled                   *bool
+	created_at                *time.Time
+	updated_at                *time.Time
+	clearedFields             map[string]struct{}
+	policies                  map[int]struct{}
+	removedpolicies           map[int]struct{}
+	clearedpolicies           bool
+	rules                     map[int]struct{}
+	removedrules              map[int]struct{}
+	clearedrules              bool
+	counters                  map[int]struct{}
+	removedcounters           map[int]struct{}
+	clearedcounters           bool
+	audits                    map[int]struct{}
+	removedaudits             map[int]struct{}
+	clearedaudits             bool
+	done                      bool
+	oldValue                  func(context.Context) (*Server, error)
+	predicates                []predicate.Server
 }
 
 var _ ent.Mutation = (*ServerMutation)(nil)
@@ -3581,6 +3584,153 @@ func (m *ServerMutation) OldUpstream(ctx context.Context) (v string, err error) 
 // ResetUpstream resets all changes to the "upstream" field.
 func (m *ServerMutation) ResetUpstream() {
 	m.upstream = nil
+}
+
+// SetForwardingMode sets the "forwarding_mode" field.
+func (m *ServerMutation) SetForwardingMode(s string) {
+	m.forwarding_mode = &s
+}
+
+// ForwardingMode returns the value of the "forwarding_mode" field in the mutation.
+func (m *ServerMutation) ForwardingMode() (r string, exists bool) {
+	v := m.forwarding_mode
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldForwardingMode returns the old "forwarding_mode" field's value of the Server entity.
+// If the Server object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ServerMutation) OldForwardingMode(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldForwardingMode is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldForwardingMode requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldForwardingMode: %w", err)
+	}
+	return oldValue.ForwardingMode, nil
+}
+
+// ClearForwardingMode clears the value of the "forwarding_mode" field.
+func (m *ServerMutation) ClearForwardingMode() {
+	m.forwarding_mode = nil
+	m.clearedFields[server.FieldForwardingMode] = struct{}{}
+}
+
+// ForwardingModeCleared returns if the "forwarding_mode" field was cleared in this mutation.
+func (m *ServerMutation) ForwardingModeCleared() bool {
+	_, ok := m.clearedFields[server.FieldForwardingMode]
+	return ok
+}
+
+// ResetForwardingMode resets all changes to the "forwarding_mode" field.
+func (m *ServerMutation) ResetForwardingMode() {
+	m.forwarding_mode = nil
+	delete(m.clearedFields, server.FieldForwardingMode)
+}
+
+// SetPingMotd sets the "ping_motd" field.
+func (m *ServerMutation) SetPingMotd(s string) {
+	m.ping_motd = &s
+}
+
+// PingMotd returns the value of the "ping_motd" field in the mutation.
+func (m *ServerMutation) PingMotd() (r string, exists bool) {
+	v := m.ping_motd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPingMotd returns the old "ping_motd" field's value of the Server entity.
+// If the Server object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ServerMutation) OldPingMotd(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPingMotd is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPingMotd requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPingMotd: %w", err)
+	}
+	return oldValue.PingMotd, nil
+}
+
+// ClearPingMotd clears the value of the "ping_motd" field.
+func (m *ServerMutation) ClearPingMotd() {
+	m.ping_motd = nil
+	m.clearedFields[server.FieldPingMotd] = struct{}{}
+}
+
+// PingMotdCleared returns if the "ping_motd" field was cleared in this mutation.
+func (m *ServerMutation) PingMotdCleared() bool {
+	_, ok := m.clearedFields[server.FieldPingMotd]
+	return ok
+}
+
+// ResetPingMotd resets all changes to the "ping_motd" field.
+func (m *ServerMutation) ResetPingMotd() {
+	m.ping_motd = nil
+	delete(m.clearedFields, server.FieldPingMotd)
+}
+
+// SetBungeeguardAllowedToken sets the "bungeeguard_allowed_token" field.
+func (m *ServerMutation) SetBungeeguardAllowedToken(s string) {
+	m.bungeeguard_allowed_token = &s
+}
+
+// BungeeguardAllowedToken returns the value of the "bungeeguard_allowed_token" field in the mutation.
+func (m *ServerMutation) BungeeguardAllowedToken() (r string, exists bool) {
+	v := m.bungeeguard_allowed_token
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldBungeeguardAllowedToken returns the old "bungeeguard_allowed_token" field's value of the Server entity.
+// If the Server object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ServerMutation) OldBungeeguardAllowedToken(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldBungeeguardAllowedToken is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldBungeeguardAllowedToken requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldBungeeguardAllowedToken: %w", err)
+	}
+	return oldValue.BungeeguardAllowedToken, nil
+}
+
+// ClearBungeeguardAllowedToken clears the value of the "bungeeguard_allowed_token" field.
+func (m *ServerMutation) ClearBungeeguardAllowedToken() {
+	m.bungeeguard_allowed_token = nil
+	m.clearedFields[server.FieldBungeeguardAllowedToken] = struct{}{}
+}
+
+// BungeeguardAllowedTokenCleared returns if the "bungeeguard_allowed_token" field was cleared in this mutation.
+func (m *ServerMutation) BungeeguardAllowedTokenCleared() bool {
+	_, ok := m.clearedFields[server.FieldBungeeguardAllowedToken]
+	return ok
+}
+
+// ResetBungeeguardAllowedToken resets all changes to the "bungeeguard_allowed_token" field.
+func (m *ServerMutation) ResetBungeeguardAllowedToken() {
+	m.bungeeguard_allowed_token = nil
+	delete(m.clearedFields, server.FieldBungeeguardAllowedToken)
 }
 
 // SetPriority sets the "priority" field.
@@ -3997,7 +4147,7 @@ func (m *ServerMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ServerMutation) Fields() []string {
-	fields := make([]string, 0, 8)
+	fields := make([]string, 0, 11)
 	if m.name != nil {
 		fields = append(fields, server.FieldName)
 	}
@@ -4009,6 +4159,15 @@ func (m *ServerMutation) Fields() []string {
 	}
 	if m.upstream != nil {
 		fields = append(fields, server.FieldUpstream)
+	}
+	if m.forwarding_mode != nil {
+		fields = append(fields, server.FieldForwardingMode)
+	}
+	if m.ping_motd != nil {
+		fields = append(fields, server.FieldPingMotd)
+	}
+	if m.bungeeguard_allowed_token != nil {
+		fields = append(fields, server.FieldBungeeguardAllowedToken)
 	}
 	if m.priority != nil {
 		fields = append(fields, server.FieldPriority)
@@ -4038,6 +4197,12 @@ func (m *ServerMutation) Field(name string) (ent.Value, bool) {
 		return m.PublicAddr()
 	case server.FieldUpstream:
 		return m.Upstream()
+	case server.FieldForwardingMode:
+		return m.ForwardingMode()
+	case server.FieldPingMotd:
+		return m.PingMotd()
+	case server.FieldBungeeguardAllowedToken:
+		return m.BungeeguardAllowedToken()
 	case server.FieldPriority:
 		return m.Priority()
 	case server.FieldEnabled:
@@ -4063,6 +4228,12 @@ func (m *ServerMutation) OldField(ctx context.Context, name string) (ent.Value, 
 		return m.OldPublicAddr(ctx)
 	case server.FieldUpstream:
 		return m.OldUpstream(ctx)
+	case server.FieldForwardingMode:
+		return m.OldForwardingMode(ctx)
+	case server.FieldPingMotd:
+		return m.OldPingMotd(ctx)
+	case server.FieldBungeeguardAllowedToken:
+		return m.OldBungeeguardAllowedToken(ctx)
 	case server.FieldPriority:
 		return m.OldPriority(ctx)
 	case server.FieldEnabled:
@@ -4107,6 +4278,27 @@ func (m *ServerMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetUpstream(v)
+		return nil
+	case server.FieldForwardingMode:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetForwardingMode(v)
+		return nil
+	case server.FieldPingMotd:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPingMotd(v)
+		return nil
+	case server.FieldBungeeguardAllowedToken:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetBungeeguardAllowedToken(v)
 		return nil
 	case server.FieldPriority:
 		v, ok := value.(int)
@@ -4187,6 +4379,15 @@ func (m *ServerMutation) ClearedFields() []string {
 	if m.FieldCleared(server.FieldPublicAddr) {
 		fields = append(fields, server.FieldPublicAddr)
 	}
+	if m.FieldCleared(server.FieldForwardingMode) {
+		fields = append(fields, server.FieldForwardingMode)
+	}
+	if m.FieldCleared(server.FieldPingMotd) {
+		fields = append(fields, server.FieldPingMotd)
+	}
+	if m.FieldCleared(server.FieldBungeeguardAllowedToken) {
+		fields = append(fields, server.FieldBungeeguardAllowedToken)
+	}
 	return fields
 }
 
@@ -4207,6 +4408,15 @@ func (m *ServerMutation) ClearField(name string) error {
 	case server.FieldPublicAddr:
 		m.ClearPublicAddr()
 		return nil
+	case server.FieldForwardingMode:
+		m.ClearForwardingMode()
+		return nil
+	case server.FieldPingMotd:
+		m.ClearPingMotd()
+		return nil
+	case server.FieldBungeeguardAllowedToken:
+		m.ClearBungeeguardAllowedToken()
+		return nil
 	}
 	return fmt.Errorf("unknown Server nullable field %s", name)
 }
@@ -4226,6 +4436,15 @@ func (m *ServerMutation) ResetField(name string) error {
 		return nil
 	case server.FieldUpstream:
 		m.ResetUpstream()
+		return nil
+	case server.FieldForwardingMode:
+		m.ResetForwardingMode()
+		return nil
+	case server.FieldPingMotd:
+		m.ResetPingMotd()
+		return nil
+	case server.FieldBungeeguardAllowedToken:
+		m.ResetBungeeguardAllowedToken()
 		return nil
 	case server.FieldPriority:
 		m.ResetPriority()

@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          cache: true
+      - name: Test
+        run: go test ./...
+      - name: Race test
+        run: go test -race ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Build
+        run: CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' ./cmd/mcproxy
+
+  go-vulnerability-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: '1.27.x'
+          go-package: './...'
+
+  admin-panel:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin-panel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.17.x'
+          cache: npm
+          cache-dependency-path: admin-panel/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+      - run: npm audit --audit-level=high
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose
+        env:
+          POSTGRES_PASSWORD: ci-validation-only
+          REDIS_PASSWORD: ci-redis-validation-only
+        run: docker compose -f deploy/docker-compose.yml config -q
+
+  compose-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start and probe Compose stack
+        run: make compose-smoke
+
+  postgres-restore-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rehearse PostgreSQL backup and restore
+        run: make postgres-restore-smoke
+
+  deployment-manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate deployment YAML
+        run: |
+          ruby -e 'require "yaml"; ARGV.each { |f| YAML.load_stream(File.read(f)) }' \
+            deploy/observability/prometheus.yml \
+            deploy/observability/alerts.yml \
+            deploy/docker-compose.smoke.yml \
+            deploy/kubernetes/mcproxy.yaml \
+            deploy/kubernetes/admin-panel.yaml \
+            deploy/kubernetes/network-policy.yaml \
+            deploy/kubernetes/external-secrets.example.yaml
+
+  container-images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build mcproxy image
+        run: docker build --pull=false -t mcproxy:ci .
+      - name: Build admin-panel image
+        run: docker build --pull=false -t mcproxy-admin-panel:ci admin-panel
+      - name: Verify image migration command
+        run: docker run --rm -e MCPROXY_DB_DRIVER=sqlite -e MCPROXY_SQLITE_PATH=/data/migration-smoke.db mcproxy:ci migrate
+
+  gate-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          cache: true
+      - name: Build mcproxy image
+        run: docker build --pull=false -t mcproxy:e2e .
+      - name: Run Minecraft status smoke test
+        run: |
+          docker run --rm -d --name mcproxy-gate-e2e -p 25565:25565 \
+            -e MCPROXY_ADMIN_TOKEN=e2e-token mcproxy:e2e
+          trap 'docker stop mcproxy-gate-e2e >/dev/null 2>&1 || true' EXIT
+          sleep 3
+          go run ./cmd/mcproxy-statuscheck -addr 127.0.0.1:25565
+
+  panel-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run admin panel container smoke test
+        run: make panel-smoke

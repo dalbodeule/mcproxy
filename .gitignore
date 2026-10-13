@@ -4,6 +4,14 @@
 ### dotenv ###
 .env
 
+### SvelteKit admin panel ###
+admin-panel/node_modules/
+admin-panel/.svelte-kit/
+admin-panel/build/
+admin-panel/.env
+admin-panel/.env.*
+!admin-panel/.env.example
+
 ### Go ###
 # If you prefer the allow list template instead of the deny list, see community template:
 # https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore

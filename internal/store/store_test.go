@@ -1,9 +1,14 @@
 package store
 
 import (
+	"context"
 	"net"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
+	"mcproxy/internal/config"
 	"mcproxy/internal/ent"
 )
 
@@ -100,5 +105,145 @@ func TestNormalizeCountryCodes(t *testing.T) {
 	got := normalizeCountryCodes([]string{" kr ", "KR", "jp", "XXX", ""})
 	if len(got) != 2 || got[0] != "KR" || got[1] != "JP" {
 		t.Fatalf("unexpected normalized countries: %#v", got)
+	}
+}
+
+func TestEvaluateAttemptIntegration(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, config.Config{DBDriver: "sqlite", DSN: "file:" + filepath.Join(t.TempDir(), "evaluate.db") + "?_pragma=foreign_keys(1)"})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	ipDeny := false
+	doNotRecord := false
+	if _, err := st.CreateRule(ctx, RuleInput{Kind: "ip-deny", Target: "203.0.113.7", IsCIDR: &ipDeny}); err != nil {
+		t.Fatalf("create deny rule: %v", err)
+	}
+	denied, err := st.EvaluateAttempt(ctx, EvaluateAttemptInput{IP: "203.0.113.7", Nickname: "blocked", Record: &doNotRecord})
+	if err != nil {
+		t.Fatalf("evaluate deny rule: %v", err)
+	}
+	if denied.Allowed || denied.Reason != "rule.deny" {
+		t.Fatalf("expected rule denial, got %#v", denied)
+	}
+
+	limit := 1
+	if _, err := st.UpsertGlobalPolicy(ctx, PolicyInput{IPBurst10s: &limit}); err != nil {
+		t.Fatalf("upsert threshold policy: %v", err)
+	}
+	first, err := st.EvaluateAttempt(ctx, EvaluateAttemptInput{IP: "198.51.100.20", Nickname: "first"})
+	if err != nil || !first.Allowed {
+		t.Fatalf("expected first attempt allowed, result=%#v err=%v", first, err)
+	}
+	second, err := st.EvaluateAttempt(ctx, EvaluateAttemptInput{IP: "198.51.100.20", Nickname: "second"})
+	if err != nil {
+		t.Fatalf("evaluate threshold: %v", err)
+	}
+	if second.Allowed || second.Reason != "threshold.ip_10s" {
+		t.Fatalf("expected threshold denial, got %#v", second)
+	}
+
+	geoMode := "allow"
+	if _, err := st.UpsertGlobalPolicy(ctx, PolicyInput{GeoMode: &geoMode, GeoList: []string{"KR"}}); err != nil {
+		t.Fatalf("upsert geo policy: %v", err)
+	}
+	geoDenied, err := st.EvaluateAttempt(ctx, EvaluateAttemptInput{IP: "198.51.100.21", Nickname: "geo", Country: "US", Record: &doNotRecord})
+	if err != nil {
+		t.Fatalf("evaluate geo policy: %v", err)
+	}
+	if geoDenied.Allowed || geoDenied.Reason != "geo.country_not_allowed" {
+		t.Fatalf("expected geo denial, got %#v", geoDenied)
+	}
+}
+
+func TestServerBungeeGuardTokenLifecycle(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, config.Config{DBDriver: "sqlite", DSN: "file:" + filepath.Join(t.TempDir(), "tokens.db") + "?_pragma=foreign_keys(1)"})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	mode := "bungeeguard"
+	server, err := st.CreateServer(ctx, ServerInput{Name: "token-test", Upstream: "127.0.0.1:25565", ForwardingMode: &mode})
+	if err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+	if len(server.BungeeGuardAllowedToken) != 32 {
+		t.Fatalf("token length = %d, want 32", len(server.BungeeGuardAllowedToken))
+	}
+	if server.ForwardingMode != "bungeeguard" {
+		t.Fatalf("forwarding mode = %q, want bungeeguard", server.ForwardingMode)
+	}
+	if _, err := st.client.Server.UpdateOneID(server.ID).SetBungeeguardAllowedToken("my-secret-token").Save(ctx); err != nil {
+		t.Fatalf("seed malformed token: %v", err)
+	}
+	repaired, err := st.GetServer(ctx, server.ID)
+	if err != nil {
+		t.Fatalf("repair malformed token: %v", err)
+	}
+	if !isValidBungeeGuardToken(repaired.BungeeGuardAllowedToken) || repaired.BungeeGuardAllowedToken == "my-secret-token" {
+		t.Fatalf("malformed token was not replaced: %q", repaired.BungeeGuardAllowedToken)
+	}
+	server = repaired
+
+	updated, err := st.UpdateServer(ctx, server.ID, ServerInput{Name: "token-test", Upstream: "127.0.0.1:25566"})
+	if err != nil {
+		t.Fatalf("update server: %v", err)
+	}
+	if updated.BungeeGuardAllowedToken != server.BungeeGuardAllowedToken {
+		t.Fatalf("ordinary update unexpectedly rotated token")
+	}
+
+	rotated, err := st.RotateBungeeGuardToken(ctx, server.ID)
+	if err != nil {
+		t.Fatalf("rotate token: %v", err)
+	}
+	if len(rotated.BungeeGuardAllowedToken) != 32 || rotated.BungeeGuardAllowedToken == server.BungeeGuardAllowedToken {
+		t.Fatalf("rotation did not produce a new 32-character token")
+	}
+}
+
+func TestStorePublishesControlPlaneInvalidation(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, config.Config{DBDriver: "sqlite", DSN: "file:" + filepath.Join(t.TempDir(), "invalidations.db") + "?_pragma=foreign_keys(1)"})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	server, err := st.CreateServer(ctx, ServerInput{Name: "invalidate-test", Upstream: "127.0.0.1:25565"})
+	if err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+	select {
+	case <-st.Invalidations():
+	case <-time.After(time.Second):
+		t.Fatal("server create did not publish an invalidation")
+	}
+	enabled := false
+	if _, err := st.UpdateServer(ctx, server.ID, ServerInput{Enabled: &enabled}); err != nil {
+		t.Fatalf("update server: %v", err)
+	}
+	select {
+	case <-st.Invalidations():
+	case <-time.After(time.Second):
+		t.Fatal("server update did not publish an invalidation")
+	}
+}
+
+func TestEvaluateAttemptRejectsOversizedInput(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, config.Config{DBDriver: "sqlite", DSN: "file:" + filepath.Join(t.TempDir(), "oversized.db") + "?_pragma=foreign_keys(1)"})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if _, err := st.EvaluateAttempt(ctx, EvaluateAttemptInput{IP: "203.0.113.1", Nickname: strings.Repeat("n", 129)}); err == nil {
+		t.Fatal("expected oversized nickname to be rejected")
+	}
+	if _, err := st.EvaluateAttempt(ctx, EvaluateAttemptInput{IP: strings.Repeat("1", 129), Nickname: "player"}); err == nil {
+		t.Fatal("expected oversized IP input to be rejected")
 	}
 }

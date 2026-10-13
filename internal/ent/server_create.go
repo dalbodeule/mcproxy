@@ -66,6 +66,48 @@ func (_c *ServerCreate) SetUpstream(v string) *ServerCreate {
 	return _c
 }
 
+// SetForwardingMode sets the "forwarding_mode" field.
+func (_c *ServerCreate) SetForwardingMode(v string) *ServerCreate {
+	_c.mutation.SetForwardingMode(v)
+	return _c
+}
+
+// SetNillableForwardingMode sets the "forwarding_mode" field if the given value is not nil.
+func (_c *ServerCreate) SetNillableForwardingMode(v *string) *ServerCreate {
+	if v != nil {
+		_c.SetForwardingMode(*v)
+	}
+	return _c
+}
+
+// SetPingMotd sets the "ping_motd" field.
+func (_c *ServerCreate) SetPingMotd(v string) *ServerCreate {
+	_c.mutation.SetPingMotd(v)
+	return _c
+}
+
+// SetNillablePingMotd sets the "ping_motd" field if the given value is not nil.
+func (_c *ServerCreate) SetNillablePingMotd(v *string) *ServerCreate {
+	if v != nil {
+		_c.SetPingMotd(*v)
+	}
+	return _c
+}
+
+// SetBungeeguardAllowedToken sets the "bungeeguard_allowed_token" field.
+func (_c *ServerCreate) SetBungeeguardAllowedToken(v string) *ServerCreate {
+	_c.mutation.SetBungeeguardAllowedToken(v)
+	return _c
+}
+
+// SetNillableBungeeguardAllowedToken sets the "bungeeguard_allowed_token" field if the given value is not nil.
+func (_c *ServerCreate) SetNillableBungeeguardAllowedToken(v *string) *ServerCreate {
+	if v != nil {
+		_c.SetBungeeguardAllowedToken(*v)
+	}
+	return _c
+}
+
 // SetPriority sets the "priority" field.
 func (_c *ServerCreate) SetPriority(v int) *ServerCreate {
 	_c.mutation.SetPriority(v)
@@ -217,6 +259,18 @@ func (_c *ServerCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *ServerCreate) defaults() {
+	if _, ok := _c.mutation.ForwardingMode(); !ok {
+		v := server.DefaultForwardingMode
+		_c.mutation.SetForwardingMode(v)
+	}
+	if _, ok := _c.mutation.PingMotd(); !ok {
+		v := server.DefaultPingMotd
+		_c.mutation.SetPingMotd(v)
+	}
+	if _, ok := _c.mutation.BungeeguardAllowedToken(); !ok {
+		v := server.DefaultBungeeguardAllowedToken
+		_c.mutation.SetBungeeguardAllowedToken(v)
+	}
 	if _, ok := _c.mutation.Priority(); !ok {
 		v := server.DefaultPriority
 		_c.mutation.SetPriority(v)
@@ -308,6 +362,18 @@ func (_c *ServerCreate) createSpec() (*Server, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Upstream(); ok {
 		_spec.SetField(server.FieldUpstream, field.TypeString, value)
 		_node.Upstream = value
+	}
+	if value, ok := _c.mutation.ForwardingMode(); ok {
+		_spec.SetField(server.FieldForwardingMode, field.TypeString, value)
+		_node.ForwardingMode = value
+	}
+	if value, ok := _c.mutation.PingMotd(); ok {
+		_spec.SetField(server.FieldPingMotd, field.TypeString, value)
+		_node.PingMotd = value
+	}
+	if value, ok := _c.mutation.BungeeguardAllowedToken(); ok {
+		_spec.SetField(server.FieldBungeeguardAllowedToken, field.TypeString, value)
+		_node.BungeeguardAllowedToken = value
 	}
 	if value, ok := _c.mutation.Priority(); ok {
 		_spec.SetField(server.FieldPriority, field.TypeInt, value)
@@ -505,6 +571,60 @@ func (u *ServerUpsert) UpdateUpstream() *ServerUpsert {
 	return u
 }
 
+// SetForwardingMode sets the "forwarding_mode" field.
+func (u *ServerUpsert) SetForwardingMode(v string) *ServerUpsert {
+	u.Set(server.FieldForwardingMode, v)
+	return u
+}
+
+// UpdateForwardingMode sets the "forwarding_mode" field to the value that was provided on create.
+func (u *ServerUpsert) UpdateForwardingMode() *ServerUpsert {
+	u.SetExcluded(server.FieldForwardingMode)
+	return u
+}
+
+// ClearForwardingMode clears the value of the "forwarding_mode" field.
+func (u *ServerUpsert) ClearForwardingMode() *ServerUpsert {
+	u.SetNull(server.FieldForwardingMode)
+	return u
+}
+
+// SetPingMotd sets the "ping_motd" field.
+func (u *ServerUpsert) SetPingMotd(v string) *ServerUpsert {
+	u.Set(server.FieldPingMotd, v)
+	return u
+}
+
+// UpdatePingMotd sets the "ping_motd" field to the value that was provided on create.
+func (u *ServerUpsert) UpdatePingMotd() *ServerUpsert {
+	u.SetExcluded(server.FieldPingMotd)
+	return u
+}
+
+// ClearPingMotd clears the value of the "ping_motd" field.
+func (u *ServerUpsert) ClearPingMotd() *ServerUpsert {
+	u.SetNull(server.FieldPingMotd)
+	return u
+}
+
+// SetBungeeguardAllowedToken sets the "bungeeguard_allowed_token" field.
+func (u *ServerUpsert) SetBungeeguardAllowedToken(v string) *ServerUpsert {
+	u.Set(server.FieldBungeeguardAllowedToken, v)
+	return u
+}
+
+// UpdateBungeeguardAllowedToken sets the "bungeeguard_allowed_token" field to the value that was provided on create.
+func (u *ServerUpsert) UpdateBungeeguardAllowedToken() *ServerUpsert {
+	u.SetExcluded(server.FieldBungeeguardAllowedToken)
+	return u
+}
+
+// ClearBungeeguardAllowedToken clears the value of the "bungeeguard_allowed_token" field.
+func (u *ServerUpsert) ClearBungeeguardAllowedToken() *ServerUpsert {
+	u.SetNull(server.FieldBungeeguardAllowedToken)
+	return u
+}
+
 // SetPriority sets the "priority" field.
 func (u *ServerUpsert) SetPriority(v int) *ServerUpsert {
 	u.Set(server.FieldPriority, v)
@@ -666,6 +786,69 @@ func (u *ServerUpsertOne) SetUpstream(v string) *ServerUpsertOne {
 func (u *ServerUpsertOne) UpdateUpstream() *ServerUpsertOne {
 	return u.Update(func(s *ServerUpsert) {
 		s.UpdateUpstream()
+	})
+}
+
+// SetForwardingMode sets the "forwarding_mode" field.
+func (u *ServerUpsertOne) SetForwardingMode(v string) *ServerUpsertOne {
+	return u.Update(func(s *ServerUpsert) {
+		s.SetForwardingMode(v)
+	})
+}
+
+// UpdateForwardingMode sets the "forwarding_mode" field to the value that was provided on create.
+func (u *ServerUpsertOne) UpdateForwardingMode() *ServerUpsertOne {
+	return u.Update(func(s *ServerUpsert) {
+		s.UpdateForwardingMode()
+	})
+}
+
+// ClearForwardingMode clears the value of the "forwarding_mode" field.
+func (u *ServerUpsertOne) ClearForwardingMode() *ServerUpsertOne {
+	return u.Update(func(s *ServerUpsert) {
+		s.ClearForwardingMode()
+	})
+}
+
+// SetPingMotd sets the "ping_motd" field.
+func (u *ServerUpsertOne) SetPingMotd(v string) *ServerUpsertOne {
+	return u.Update(func(s *ServerUpsert) {
+		s.SetPingMotd(v)
+	})
+}
+
+// UpdatePingMotd sets the "ping_motd" field to the value that was provided on create.
+func (u *ServerUpsertOne) UpdatePingMotd() *ServerUpsertOne {
+	return u.Update(func(s *ServerUpsert) {
+		s.UpdatePingMotd()
+	})
+}
+
+// ClearPingMotd clears the value of the "ping_motd" field.
+func (u *ServerUpsertOne) ClearPingMotd() *ServerUpsertOne {
+	return u.Update(func(s *ServerUpsert) {
+		s.ClearPingMotd()
+	})
+}
+
+// SetBungeeguardAllowedToken sets the "bungeeguard_allowed_token" field.
+func (u *ServerUpsertOne) SetBungeeguardAllowedToken(v string) *ServerUpsertOne {
+	return u.Update(func(s *ServerUpsert) {
+		s.SetBungeeguardAllowedToken(v)
+	})
+}
+
+// UpdateBungeeguardAllowedToken sets the "bungeeguard_allowed_token" field to the value that was provided on create.
+func (u *ServerUpsertOne) UpdateBungeeguardAllowedToken() *ServerUpsertOne {
+	return u.Update(func(s *ServerUpsert) {
+		s.UpdateBungeeguardAllowedToken()
+	})
+}
+
+// ClearBungeeguardAllowedToken clears the value of the "bungeeguard_allowed_token" field.
+func (u *ServerUpsertOne) ClearBungeeguardAllowedToken() *ServerUpsertOne {
+	return u.Update(func(s *ServerUpsert) {
+		s.ClearBungeeguardAllowedToken()
 	})
 }
 
@@ -1003,6 +1186,69 @@ func (u *ServerUpsertBulk) SetUpstream(v string) *ServerUpsertBulk {
 func (u *ServerUpsertBulk) UpdateUpstream() *ServerUpsertBulk {
 	return u.Update(func(s *ServerUpsert) {
 		s.UpdateUpstream()
+	})
+}
+
+// SetForwardingMode sets the "forwarding_mode" field.
+func (u *ServerUpsertBulk) SetForwardingMode(v string) *ServerUpsertBulk {
+	return u.Update(func(s *ServerUpsert) {
+		s.SetForwardingMode(v)
+	})
+}
+
+// UpdateForwardingMode sets the "forwarding_mode" field to the value that was provided on create.
+func (u *ServerUpsertBulk) UpdateForwardingMode() *ServerUpsertBulk {
+	return u.Update(func(s *ServerUpsert) {
+		s.UpdateForwardingMode()
+	})
+}
+
+// ClearForwardingMode clears the value of the "forwarding_mode" field.
+func (u *ServerUpsertBulk) ClearForwardingMode() *ServerUpsertBulk {
+	return u.Update(func(s *ServerUpsert) {
+		s.ClearForwardingMode()
+	})
+}
+
+// SetPingMotd sets the "ping_motd" field.
+func (u *ServerUpsertBulk) SetPingMotd(v string) *ServerUpsertBulk {
+	return u.Update(func(s *ServerUpsert) {
+		s.SetPingMotd(v)
+	})
+}
+
+// UpdatePingMotd sets the "ping_motd" field to the value that was provided on create.
+func (u *ServerUpsertBulk) UpdatePingMotd() *ServerUpsertBulk {
+	return u.Update(func(s *ServerUpsert) {
+		s.UpdatePingMotd()
+	})
+}
+
+// ClearPingMotd clears the value of the "ping_motd" field.
+func (u *ServerUpsertBulk) ClearPingMotd() *ServerUpsertBulk {
+	return u.Update(func(s *ServerUpsert) {
+		s.ClearPingMotd()
+	})
+}
+
+// SetBungeeguardAllowedToken sets the "bungeeguard_allowed_token" field.
+func (u *ServerUpsertBulk) SetBungeeguardAllowedToken(v string) *ServerUpsertBulk {
+	return u.Update(func(s *ServerUpsert) {
+		s.SetBungeeguardAllowedToken(v)
+	})
+}
+
+// UpdateBungeeguardAllowedToken sets the "bungeeguard_allowed_token" field to the value that was provided on create.
+func (u *ServerUpsertBulk) UpdateBungeeguardAllowedToken() *ServerUpsertBulk {
+	return u.Update(func(s *ServerUpsert) {
+		s.UpdateBungeeguardAllowedToken()
+	})
+}
+
+// ClearBungeeguardAllowedToken clears the value of the "bungeeguard_allowed_token" field.
+func (u *ServerUpsertBulk) ClearBungeeguardAllowedToken() *ServerUpsertBulk {
+	return u.Update(func(s *ServerUpsert) {
+		s.ClearBungeeguardAllowedToken()
 	})
 }
 

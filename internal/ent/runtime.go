@@ -146,20 +146,32 @@ func init() {
 	serverDescUpstream := serverFields[3].Descriptor()
 	// server.UpstreamValidator is a validator for the "upstream" field. It is called by the builders before save.
 	server.UpstreamValidator = serverDescUpstream.Validators[0].(func(string) error)
+	// serverDescForwardingMode is the schema descriptor for forwarding_mode field.
+	serverDescForwardingMode := serverFields[4].Descriptor()
+	// server.DefaultForwardingMode holds the default value on creation for the forwarding_mode field.
+	server.DefaultForwardingMode = serverDescForwardingMode.Default.(string)
+	// serverDescPingMotd is the schema descriptor for ping_motd field.
+	serverDescPingMotd := serverFields[5].Descriptor()
+	// server.DefaultPingMotd holds the default value on creation for the ping_motd field.
+	server.DefaultPingMotd = serverDescPingMotd.Default.(string)
+	// serverDescBungeeguardAllowedToken is the schema descriptor for bungeeguard_allowed_token field.
+	serverDescBungeeguardAllowedToken := serverFields[6].Descriptor()
+	// server.DefaultBungeeguardAllowedToken holds the default value on creation for the bungeeguard_allowed_token field.
+	server.DefaultBungeeguardAllowedToken = serverDescBungeeguardAllowedToken.Default.(string)
 	// serverDescPriority is the schema descriptor for priority field.
-	serverDescPriority := serverFields[4].Descriptor()
+	serverDescPriority := serverFields[7].Descriptor()
 	// server.DefaultPriority holds the default value on creation for the priority field.
 	server.DefaultPriority = serverDescPriority.Default.(int)
 	// serverDescEnabled is the schema descriptor for enabled field.
-	serverDescEnabled := serverFields[5].Descriptor()
+	serverDescEnabled := serverFields[8].Descriptor()
 	// server.DefaultEnabled holds the default value on creation for the enabled field.
 	server.DefaultEnabled = serverDescEnabled.Default.(bool)
 	// serverDescCreatedAt is the schema descriptor for created_at field.
-	serverDescCreatedAt := serverFields[6].Descriptor()
+	serverDescCreatedAt := serverFields[9].Descriptor()
 	// server.DefaultCreatedAt holds the default value on creation for the created_at field.
 	server.DefaultCreatedAt = serverDescCreatedAt.Default.(func() time.Time)
 	// serverDescUpdatedAt is the schema descriptor for updated_at field.
-	serverDescUpdatedAt := serverFields[7].Descriptor()
+	serverDescUpdatedAt := serverFields[10].Descriptor()
 	// server.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	server.DefaultUpdatedAt = serverDescUpdatedAt.Default.(func() time.Time)
 	// server.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.

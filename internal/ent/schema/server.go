@@ -17,6 +17,9 @@ func (Server) Fields() []ent.Field {
 		field.String("public_host").Optional().Nillable(),
 		field.String("public_addr").Optional().Nillable(),
 		field.String("upstream").NotEmpty(), // host:port or address used by Gate to route
+		field.String("forwarding_mode").Optional().Default(""), // empty uses the legacy global fallback; otherwise none, legacy, velocity, or bungeeguard
+		field.String("ping_motd").Optional().Default(""),
+		field.String("bungeeguard_allowed_token").Optional().Default("").Sensitive(),
 		field.Int("priority").Default(100),
 		field.Bool("enabled").Default(true),
 		field.Time("created_at").Default(time.Now),

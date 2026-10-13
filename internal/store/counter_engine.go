@@ -7,8 +7,10 @@ import (
 )
 
 type bucketCounter struct {
-	mu      sync.Mutex
-	buckets map[string]*windowBucket
+	mu            sync.Mutex
+	buckets       map[string]*windowBucket
+	operations    uint64
+	lastCleanupAt time.Time
 }
 
 type windowBucket struct {
@@ -25,6 +27,15 @@ func (c *bucketCounter) bump(scope string, serverID *int, kind, key string, wind
 	defer c.mu.Unlock()
 	composite := fmt.Sprintf("%s:%v:%s:%s:%d", scope, serverIDValue(serverID), kind, key, windowSec)
 	now := time.Now().UTC()
+	c.operations++
+	if c.operations%256 == 0 || c.lastCleanupAt.IsZero() || now.Sub(c.lastCleanupAt) >= 30*time.Second {
+		for name, bucket := range c.buckets {
+			if now.Sub(bucket.start) >= 2*time.Minute {
+				delete(c.buckets, name)
+			}
+		}
+		c.lastCleanupAt = now
+	}
 	b, ok := c.buckets[composite]
 	if !ok || now.Sub(b.start) >= time.Duration(windowSec)*time.Second {
 		b = &windowBucket{start: now, count: 0}

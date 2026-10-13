@@ -101,6 +101,66 @@ func (_u *ServerUpdate) SetNillableUpstream(v *string) *ServerUpdate {
 	return _u
 }
 
+// SetForwardingMode sets the "forwarding_mode" field.
+func (_u *ServerUpdate) SetForwardingMode(v string) *ServerUpdate {
+	_u.mutation.SetForwardingMode(v)
+	return _u
+}
+
+// SetNillableForwardingMode sets the "forwarding_mode" field if the given value is not nil.
+func (_u *ServerUpdate) SetNillableForwardingMode(v *string) *ServerUpdate {
+	if v != nil {
+		_u.SetForwardingMode(*v)
+	}
+	return _u
+}
+
+// ClearForwardingMode clears the value of the "forwarding_mode" field.
+func (_u *ServerUpdate) ClearForwardingMode() *ServerUpdate {
+	_u.mutation.ClearForwardingMode()
+	return _u
+}
+
+// SetPingMotd sets the "ping_motd" field.
+func (_u *ServerUpdate) SetPingMotd(v string) *ServerUpdate {
+	_u.mutation.SetPingMotd(v)
+	return _u
+}
+
+// SetNillablePingMotd sets the "ping_motd" field if the given value is not nil.
+func (_u *ServerUpdate) SetNillablePingMotd(v *string) *ServerUpdate {
+	if v != nil {
+		_u.SetPingMotd(*v)
+	}
+	return _u
+}
+
+// ClearPingMotd clears the value of the "ping_motd" field.
+func (_u *ServerUpdate) ClearPingMotd() *ServerUpdate {
+	_u.mutation.ClearPingMotd()
+	return _u
+}
+
+// SetBungeeguardAllowedToken sets the "bungeeguard_allowed_token" field.
+func (_u *ServerUpdate) SetBungeeguardAllowedToken(v string) *ServerUpdate {
+	_u.mutation.SetBungeeguardAllowedToken(v)
+	return _u
+}
+
+// SetNillableBungeeguardAllowedToken sets the "bungeeguard_allowed_token" field if the given value is not nil.
+func (_u *ServerUpdate) SetNillableBungeeguardAllowedToken(v *string) *ServerUpdate {
+	if v != nil {
+		_u.SetBungeeguardAllowedToken(*v)
+	}
+	return _u
+}
+
+// ClearBungeeguardAllowedToken clears the value of the "bungeeguard_allowed_token" field.
+func (_u *ServerUpdate) ClearBungeeguardAllowedToken() *ServerUpdate {
+	_u.mutation.ClearBungeeguardAllowedToken()
+	return _u
+}
+
 // SetPriority sets the "priority" field.
 func (_u *ServerUpdate) SetPriority(v int) *ServerUpdate {
 	_u.mutation.ResetPriority()
@@ -385,6 +445,24 @@ func (_u *ServerUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.Upstream(); ok {
 		_spec.SetField(server.FieldUpstream, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.ForwardingMode(); ok {
+		_spec.SetField(server.FieldForwardingMode, field.TypeString, value)
+	}
+	if _u.mutation.ForwardingModeCleared() {
+		_spec.ClearField(server.FieldForwardingMode, field.TypeString)
+	}
+	if value, ok := _u.mutation.PingMotd(); ok {
+		_spec.SetField(server.FieldPingMotd, field.TypeString, value)
+	}
+	if _u.mutation.PingMotdCleared() {
+		_spec.ClearField(server.FieldPingMotd, field.TypeString)
+	}
+	if value, ok := _u.mutation.BungeeguardAllowedToken(); ok {
+		_spec.SetField(server.FieldBungeeguardAllowedToken, field.TypeString, value)
+	}
+	if _u.mutation.BungeeguardAllowedTokenCleared() {
+		_spec.ClearField(server.FieldBungeeguardAllowedToken, field.TypeString)
 	}
 	if value, ok := _u.mutation.Priority(); ok {
 		_spec.SetField(server.FieldPriority, field.TypeInt, value)
@@ -680,6 +758,66 @@ func (_u *ServerUpdateOne) SetNillableUpstream(v *string) *ServerUpdateOne {
 	if v != nil {
 		_u.SetUpstream(*v)
 	}
+	return _u
+}
+
+// SetForwardingMode sets the "forwarding_mode" field.
+func (_u *ServerUpdateOne) SetForwardingMode(v string) *ServerUpdateOne {
+	_u.mutation.SetForwardingMode(v)
+	return _u
+}
+
+// SetNillableForwardingMode sets the "forwarding_mode" field if the given value is not nil.
+func (_u *ServerUpdateOne) SetNillableForwardingMode(v *string) *ServerUpdateOne {
+	if v != nil {
+		_u.SetForwardingMode(*v)
+	}
+	return _u
+}
+
+// ClearForwardingMode clears the value of the "forwarding_mode" field.
+func (_u *ServerUpdateOne) ClearForwardingMode() *ServerUpdateOne {
+	_u.mutation.ClearForwardingMode()
+	return _u
+}
+
+// SetPingMotd sets the "ping_motd" field.
+func (_u *ServerUpdateOne) SetPingMotd(v string) *ServerUpdateOne {
+	_u.mutation.SetPingMotd(v)
+	return _u
+}
+
+// SetNillablePingMotd sets the "ping_motd" field if the given value is not nil.
+func (_u *ServerUpdateOne) SetNillablePingMotd(v *string) *ServerUpdateOne {
+	if v != nil {
+		_u.SetPingMotd(*v)
+	}
+	return _u
+}
+
+// ClearPingMotd clears the value of the "ping_motd" field.
+func (_u *ServerUpdateOne) ClearPingMotd() *ServerUpdateOne {
+	_u.mutation.ClearPingMotd()
+	return _u
+}
+
+// SetBungeeguardAllowedToken sets the "bungeeguard_allowed_token" field.
+func (_u *ServerUpdateOne) SetBungeeguardAllowedToken(v string) *ServerUpdateOne {
+	_u.mutation.SetBungeeguardAllowedToken(v)
+	return _u
+}
+
+// SetNillableBungeeguardAllowedToken sets the "bungeeguard_allowed_token" field if the given value is not nil.
+func (_u *ServerUpdateOne) SetNillableBungeeguardAllowedToken(v *string) *ServerUpdateOne {
+	if v != nil {
+		_u.SetBungeeguardAllowedToken(*v)
+	}
+	return _u
+}
+
+// ClearBungeeguardAllowedToken clears the value of the "bungeeguard_allowed_token" field.
+func (_u *ServerUpdateOne) ClearBungeeguardAllowedToken() *ServerUpdateOne {
+	_u.mutation.ClearBungeeguardAllowedToken()
 	return _u
 }
 
@@ -997,6 +1135,24 @@ func (_u *ServerUpdateOne) sqlSave(ctx context.Context) (_node *Server, err erro
 	}
 	if value, ok := _u.mutation.Upstream(); ok {
 		_spec.SetField(server.FieldUpstream, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.ForwardingMode(); ok {
+		_spec.SetField(server.FieldForwardingMode, field.TypeString, value)
+	}
+	if _u.mutation.ForwardingModeCleared() {
+		_spec.ClearField(server.FieldForwardingMode, field.TypeString)
+	}
+	if value, ok := _u.mutation.PingMotd(); ok {
+		_spec.SetField(server.FieldPingMotd, field.TypeString, value)
+	}
+	if _u.mutation.PingMotdCleared() {
+		_spec.ClearField(server.FieldPingMotd, field.TypeString)
+	}
+	if value, ok := _u.mutation.BungeeguardAllowedToken(); ok {
+		_spec.SetField(server.FieldBungeeguardAllowedToken, field.TypeString, value)
+	}
+	if _u.mutation.BungeeguardAllowedTokenCleared() {
+		_spec.ClearField(server.FieldBungeeguardAllowedToken, field.TypeString)
 	}
 	if value, ok := _u.mutation.Priority(); ok {
 		_spec.SetField(server.FieldPriority, field.TypeInt, value)

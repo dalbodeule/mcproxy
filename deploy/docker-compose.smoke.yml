@@ -1,0 +1,7 @@
+services:
+  mcproxy:
+    # The smoke test probes /ready inside the container and does not need to
+    # claim the host's public Minecraft port.
+    # Compose's !reset tag removes the production port mapping instead of
+    # merging with it. This keeps smoke tests independent of host port 25565.
+    ports: !reset []

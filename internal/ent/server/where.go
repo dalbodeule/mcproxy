@@ -76,6 +76,21 @@ func Upstream(v string) predicate.Server {
 	return predicate.Server(sql.FieldEQ(FieldUpstream, v))
 }
 
+// ForwardingMode applies equality check predicate on the "forwarding_mode" field. It's identical to ForwardingModeEQ.
+func ForwardingMode(v string) predicate.Server {
+	return predicate.Server(sql.FieldEQ(FieldForwardingMode, v))
+}
+
+// PingMotd applies equality check predicate on the "ping_motd" field. It's identical to PingMotdEQ.
+func PingMotd(v string) predicate.Server {
+	return predicate.Server(sql.FieldEQ(FieldPingMotd, v))
+}
+
+// BungeeguardAllowedToken applies equality check predicate on the "bungeeguard_allowed_token" field. It's identical to BungeeguardAllowedTokenEQ.
+func BungeeguardAllowedToken(v string) predicate.Server {
+	return predicate.Server(sql.FieldEQ(FieldBungeeguardAllowedToken, v))
+}
+
 // Priority applies equality check predicate on the "priority" field. It's identical to PriorityEQ.
 func Priority(v int) predicate.Server {
 	return predicate.Server(sql.FieldEQ(FieldPriority, v))
@@ -374,6 +389,231 @@ func UpstreamEqualFold(v string) predicate.Server {
 // UpstreamContainsFold applies the ContainsFold predicate on the "upstream" field.
 func UpstreamContainsFold(v string) predicate.Server {
 	return predicate.Server(sql.FieldContainsFold(FieldUpstream, v))
+}
+
+// ForwardingModeEQ applies the EQ predicate on the "forwarding_mode" field.
+func ForwardingModeEQ(v string) predicate.Server {
+	return predicate.Server(sql.FieldEQ(FieldForwardingMode, v))
+}
+
+// ForwardingModeNEQ applies the NEQ predicate on the "forwarding_mode" field.
+func ForwardingModeNEQ(v string) predicate.Server {
+	return predicate.Server(sql.FieldNEQ(FieldForwardingMode, v))
+}
+
+// ForwardingModeIn applies the In predicate on the "forwarding_mode" field.
+func ForwardingModeIn(vs ...string) predicate.Server {
+	return predicate.Server(sql.FieldIn(FieldForwardingMode, vs...))
+}
+
+// ForwardingModeNotIn applies the NotIn predicate on the "forwarding_mode" field.
+func ForwardingModeNotIn(vs ...string) predicate.Server {
+	return predicate.Server(sql.FieldNotIn(FieldForwardingMode, vs...))
+}
+
+// ForwardingModeGT applies the GT predicate on the "forwarding_mode" field.
+func ForwardingModeGT(v string) predicate.Server {
+	return predicate.Server(sql.FieldGT(FieldForwardingMode, v))
+}
+
+// ForwardingModeGTE applies the GTE predicate on the "forwarding_mode" field.
+func ForwardingModeGTE(v string) predicate.Server {
+	return predicate.Server(sql.FieldGTE(FieldForwardingMode, v))
+}
+
+// ForwardingModeLT applies the LT predicate on the "forwarding_mode" field.
+func ForwardingModeLT(v string) predicate.Server {
+	return predicate.Server(sql.FieldLT(FieldForwardingMode, v))
+}
+
+// ForwardingModeLTE applies the LTE predicate on the "forwarding_mode" field.
+func ForwardingModeLTE(v string) predicate.Server {
+	return predicate.Server(sql.FieldLTE(FieldForwardingMode, v))
+}
+
+// ForwardingModeContains applies the Contains predicate on the "forwarding_mode" field.
+func ForwardingModeContains(v string) predicate.Server {
+	return predicate.Server(sql.FieldContains(FieldForwardingMode, v))
+}
+
+// ForwardingModeHasPrefix applies the HasPrefix predicate on the "forwarding_mode" field.
+func ForwardingModeHasPrefix(v string) predicate.Server {
+	return predicate.Server(sql.FieldHasPrefix(FieldForwardingMode, v))
+}
+
+// ForwardingModeHasSuffix applies the HasSuffix predicate on the "forwarding_mode" field.
+func ForwardingModeHasSuffix(v string) predicate.Server {
+	return predicate.Server(sql.FieldHasSuffix(FieldForwardingMode, v))
+}
+
+// ForwardingModeIsNil applies the IsNil predicate on the "forwarding_mode" field.
+func ForwardingModeIsNil() predicate.Server {
+	return predicate.Server(sql.FieldIsNull(FieldForwardingMode))
+}
+
+// ForwardingModeNotNil applies the NotNil predicate on the "forwarding_mode" field.
+func ForwardingModeNotNil() predicate.Server {
+	return predicate.Server(sql.FieldNotNull(FieldForwardingMode))
+}
+
+// ForwardingModeEqualFold applies the EqualFold predicate on the "forwarding_mode" field.
+func ForwardingModeEqualFold(v string) predicate.Server {
+	return predicate.Server(sql.FieldEqualFold(FieldForwardingMode, v))
+}
+
+// ForwardingModeContainsFold applies the ContainsFold predicate on the "forwarding_mode" field.
+func ForwardingModeContainsFold(v string) predicate.Server {
+	return predicate.Server(sql.FieldContainsFold(FieldForwardingMode, v))
+}
+
+// PingMotdEQ applies the EQ predicate on the "ping_motd" field.
+func PingMotdEQ(v string) predicate.Server {
+	return predicate.Server(sql.FieldEQ(FieldPingMotd, v))
+}
+
+// PingMotdNEQ applies the NEQ predicate on the "ping_motd" field.
+func PingMotdNEQ(v string) predicate.Server {
+	return predicate.Server(sql.FieldNEQ(FieldPingMotd, v))
+}
+
+// PingMotdIn applies the In predicate on the "ping_motd" field.
+func PingMotdIn(vs ...string) predicate.Server {
+	return predicate.Server(sql.FieldIn(FieldPingMotd, vs...))
+}
+
+// PingMotdNotIn applies the NotIn predicate on the "ping_motd" field.
+func PingMotdNotIn(vs ...string) predicate.Server {
+	return predicate.Server(sql.FieldNotIn(FieldPingMotd, vs...))
+}
+
+// PingMotdGT applies the GT predicate on the "ping_motd" field.
+func PingMotdGT(v string) predicate.Server {
+	return predicate.Server(sql.FieldGT(FieldPingMotd, v))
+}
+
+// PingMotdGTE applies the GTE predicate on the "ping_motd" field.
+func PingMotdGTE(v string) predicate.Server {
+	return predicate.Server(sql.FieldGTE(FieldPingMotd, v))
+}
+
+// PingMotdLT applies the LT predicate on the "ping_motd" field.
+func PingMotdLT(v string) predicate.Server {
+	return predicate.Server(sql.FieldLT(FieldPingMotd, v))
+}
+
+// PingMotdLTE applies the LTE predicate on the "ping_motd" field.
+func PingMotdLTE(v string) predicate.Server {
+	return predicate.Server(sql.FieldLTE(FieldPingMotd, v))
+}
+
+// PingMotdContains applies the Contains predicate on the "ping_motd" field.
+func PingMotdContains(v string) predicate.Server {
+	return predicate.Server(sql.FieldContains(FieldPingMotd, v))
+}
+
+// PingMotdHasPrefix applies the HasPrefix predicate on the "ping_motd" field.
+func PingMotdHasPrefix(v string) predicate.Server {
+	return predicate.Server(sql.FieldHasPrefix(FieldPingMotd, v))
+}
+
+// PingMotdHasSuffix applies the HasSuffix predicate on the "ping_motd" field.
+func PingMotdHasSuffix(v string) predicate.Server {
+	return predicate.Server(sql.FieldHasSuffix(FieldPingMotd, v))
+}
+
+// PingMotdIsNil applies the IsNil predicate on the "ping_motd" field.
+func PingMotdIsNil() predicate.Server {
+	return predicate.Server(sql.FieldIsNull(FieldPingMotd))
+}
+
+// PingMotdNotNil applies the NotNil predicate on the "ping_motd" field.
+func PingMotdNotNil() predicate.Server {
+	return predicate.Server(sql.FieldNotNull(FieldPingMotd))
+}
+
+// PingMotdEqualFold applies the EqualFold predicate on the "ping_motd" field.
+func PingMotdEqualFold(v string) predicate.Server {
+	return predicate.Server(sql.FieldEqualFold(FieldPingMotd, v))
+}
+
+// PingMotdContainsFold applies the ContainsFold predicate on the "ping_motd" field.
+func PingMotdContainsFold(v string) predicate.Server {
+	return predicate.Server(sql.FieldContainsFold(FieldPingMotd, v))
+}
+
+// BungeeguardAllowedTokenEQ applies the EQ predicate on the "bungeeguard_allowed_token" field.
+func BungeeguardAllowedTokenEQ(v string) predicate.Server {
+	return predicate.Server(sql.FieldEQ(FieldBungeeguardAllowedToken, v))
+}
+
+// BungeeguardAllowedTokenNEQ applies the NEQ predicate on the "bungeeguard_allowed_token" field.
+func BungeeguardAllowedTokenNEQ(v string) predicate.Server {
+	return predicate.Server(sql.FieldNEQ(FieldBungeeguardAllowedToken, v))
+}
+
+// BungeeguardAllowedTokenIn applies the In predicate on the "bungeeguard_allowed_token" field.
+func BungeeguardAllowedTokenIn(vs ...string) predicate.Server {
+	return predicate.Server(sql.FieldIn(FieldBungeeguardAllowedToken, vs...))
+}
+
+// BungeeguardAllowedTokenNotIn applies the NotIn predicate on the "bungeeguard_allowed_token" field.
+func BungeeguardAllowedTokenNotIn(vs ...string) predicate.Server {
+	return predicate.Server(sql.FieldNotIn(FieldBungeeguardAllowedToken, vs...))
+}
+
+// BungeeguardAllowedTokenGT applies the GT predicate on the "bungeeguard_allowed_token" field.
+func BungeeguardAllowedTokenGT(v string) predicate.Server {
+	return predicate.Server(sql.FieldGT(FieldBungeeguardAllowedToken, v))
+}
+
+// BungeeguardAllowedTokenGTE applies the GTE predicate on the "bungeeguard_allowed_token" field.
+func BungeeguardAllowedTokenGTE(v string) predicate.Server {
+	return predicate.Server(sql.FieldGTE(FieldBungeeguardAllowedToken, v))
+}
+
+// BungeeguardAllowedTokenLT applies the LT predicate on the "bungeeguard_allowed_token" field.
+func BungeeguardAllowedTokenLT(v string) predicate.Server {
+	return predicate.Server(sql.FieldLT(FieldBungeeguardAllowedToken, v))
+}
+
+// BungeeguardAllowedTokenLTE applies the LTE predicate on the "bungeeguard_allowed_token" field.
+func BungeeguardAllowedTokenLTE(v string) predicate.Server {
+	return predicate.Server(sql.FieldLTE(FieldBungeeguardAllowedToken, v))
+}
+
+// BungeeguardAllowedTokenContains applies the Contains predicate on the "bungeeguard_allowed_token" field.
+func BungeeguardAllowedTokenContains(v string) predicate.Server {
+	return predicate.Server(sql.FieldContains(FieldBungeeguardAllowedToken, v))
+}
+
+// BungeeguardAllowedTokenHasPrefix applies the HasPrefix predicate on the "bungeeguard_allowed_token" field.
+func BungeeguardAllowedTokenHasPrefix(v string) predicate.Server {
+	return predicate.Server(sql.FieldHasPrefix(FieldBungeeguardAllowedToken, v))
+}
+
+// BungeeguardAllowedTokenHasSuffix applies the HasSuffix predicate on the "bungeeguard_allowed_token" field.
+func BungeeguardAllowedTokenHasSuffix(v string) predicate.Server {
+	return predicate.Server(sql.FieldHasSuffix(FieldBungeeguardAllowedToken, v))
+}
+
+// BungeeguardAllowedTokenIsNil applies the IsNil predicate on the "bungeeguard_allowed_token" field.
+func BungeeguardAllowedTokenIsNil() predicate.Server {
+	return predicate.Server(sql.FieldIsNull(FieldBungeeguardAllowedToken))
+}
+
+// BungeeguardAllowedTokenNotNil applies the NotNil predicate on the "bungeeguard_allowed_token" field.
+func BungeeguardAllowedTokenNotNil() predicate.Server {
+	return predicate.Server(sql.FieldNotNull(FieldBungeeguardAllowedToken))
+}
+
+// BungeeguardAllowedTokenEqualFold applies the EqualFold predicate on the "bungeeguard_allowed_token" field.
+func BungeeguardAllowedTokenEqualFold(v string) predicate.Server {
+	return predicate.Server(sql.FieldEqualFold(FieldBungeeguardAllowedToken, v))
+}
+
+// BungeeguardAllowedTokenContainsFold applies the ContainsFold predicate on the "bungeeguard_allowed_token" field.
+func BungeeguardAllowedTokenContainsFold(v string) predicate.Server {
+	return predicate.Server(sql.FieldContainsFold(FieldBungeeguardAllowedToken, v))
 }
 
 // PriorityEQ applies the EQ predicate on the "priority" field.

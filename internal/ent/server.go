@@ -25,6 +25,12 @@ type Server struct {
 	PublicAddr *string `json:"public_addr,omitempty"`
 	// Upstream holds the value of the "upstream" field.
 	Upstream string `json:"upstream,omitempty"`
+	// ForwardingMode holds the value of the "forwarding_mode" field.
+	ForwardingMode string `json:"forwarding_mode,omitempty"`
+	// PingMotd holds the value of the "ping_motd" field.
+	PingMotd string `json:"ping_motd,omitempty"`
+	// BungeeguardAllowedToken holds the value of the "bungeeguard_allowed_token" field.
+	BungeeguardAllowedToken string `json:"-"`
 	// Priority holds the value of the "priority" field.
 	Priority int `json:"priority,omitempty"`
 	// Enabled holds the value of the "enabled" field.
@@ -99,7 +105,7 @@ func (*Server) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullBool)
 		case server.FieldID, server.FieldPriority:
 			values[i] = new(sql.NullInt64)
-		case server.FieldName, server.FieldPublicHost, server.FieldPublicAddr, server.FieldUpstream:
+		case server.FieldName, server.FieldPublicHost, server.FieldPublicAddr, server.FieldUpstream, server.FieldForwardingMode, server.FieldPingMotd, server.FieldBungeeguardAllowedToken:
 			values[i] = new(sql.NullString)
 		case server.FieldCreatedAt, server.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -149,6 +155,24 @@ func (_m *Server) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field upstream", values[i])
 			} else if value.Valid {
 				_m.Upstream = value.String
+			}
+		case server.FieldForwardingMode:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field forwarding_mode", values[i])
+			} else if value.Valid {
+				_m.ForwardingMode = value.String
+			}
+		case server.FieldPingMotd:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field ping_motd", values[i])
+			} else if value.Valid {
+				_m.PingMotd = value.String
+			}
+		case server.FieldBungeeguardAllowedToken:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field bungeeguard_allowed_token", values[i])
+			} else if value.Valid {
+				_m.BungeeguardAllowedToken = value.String
 			}
 		case server.FieldPriority:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -245,6 +269,14 @@ func (_m *Server) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("upstream=")
 	builder.WriteString(_m.Upstream)
+	builder.WriteString(", ")
+	builder.WriteString("forwarding_mode=")
+	builder.WriteString(_m.ForwardingMode)
+	builder.WriteString(", ")
+	builder.WriteString("ping_motd=")
+	builder.WriteString(_m.PingMotd)
+	builder.WriteString(", ")
+	builder.WriteString("bungeeguard_allowed_token=<sensitive>")
 	builder.WriteString(", ")
 	builder.WriteString("priority=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Priority))

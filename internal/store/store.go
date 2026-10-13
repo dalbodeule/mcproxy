@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	entsql "entgo.io/ent/dialect/sql"
@@ -20,48 +22,69 @@ import (
 	"mcproxy/internal/ent"
 	"mcproxy/internal/ent/accesspolicy"
 	"mcproxy/internal/ent/audit"
+	"mcproxy/internal/ent/counter"
+	entpredicate "mcproxy/internal/ent/predicate"
 	"mcproxy/internal/ent/rule"
 	"mcproxy/internal/ent/server"
 )
 
 type Store struct {
-	db        *sql.DB
-	client    *ent.Client
-	startedAt time.Time
-	cache     *snapshotCache
-	counters  *bucketCounter
-	audits    *auditWriter
-	dist      *distributedCoordinator
+	db            *sql.DB
+	client        *ent.Client
+	startedAt     time.Time
+	cache         *snapshotCache
+	counters      *bucketCounter
+	audits        *auditWriter
+	dist          *distributedCoordinator
+	invalidations chan struct{}
+	blockMu       sync.RWMutex
+	blockReasons  map[string]int64
 }
 
 type Stats struct {
-	UptimeSeconds int64 `json:"uptime_seconds"`
-	Servers       int   `json:"servers"`
-	Policies      int   `json:"policies"`
-	Rules         int   `json:"rules"`
-	Counters      int   `json:"counters"`
-	Blocks        int64 `json:"blocks"`
+	UptimeSeconds  int64            `json:"uptime_seconds"`
+	Servers        int              `json:"servers"`
+	EnabledServers int              `json:"enabled_servers"`
+	Policies       int              `json:"policies"`
+	Rules          int              `json:"rules"`
+	Counters       int              `json:"counters"`
+	Blocks         int64            `json:"blocks"`
+	BlockReasons   map[string]int64 `json:"block_reasons,omitempty"`
+}
+
+type AuditDTO struct {
+	ID        int            `json:"id"`
+	Event     string         `json:"event"`
+	Actor     *string        `json:"actor,omitempty"`
+	ServerID  *int           `json:"server_id,omitempty"`
+	Details   map[string]any `json:"details"`
+	CreatedAt time.Time      `json:"created_at"`
 }
 
 type ServerInput struct {
-	Name       string  `json:"name"`
-	PublicHost *string `json:"public_host,omitempty"`
-	PublicAddr *string `json:"public_addr,omitempty"`
-	Upstream   string  `json:"upstream"`
-	Priority   *int    `json:"priority,omitempty"`
-	Enabled    *bool   `json:"enabled,omitempty"`
+	Name           string  `json:"name"`
+	PublicHost     *string `json:"public_host,omitempty"`
+	PublicAddr     *string `json:"public_addr,omitempty"`
+	Upstream       string  `json:"upstream"`
+	ForwardingMode *string `json:"forwarding_mode,omitempty"`
+	PingMOTD       *string `json:"ping_motd,omitempty"`
+	Priority       *int    `json:"priority,omitempty"`
+	Enabled        *bool   `json:"enabled,omitempty"`
 }
 
 type ServerDTO struct {
-	ID         int       `json:"id"`
-	Name       string    `json:"name"`
-	PublicHost string    `json:"public_host,omitempty"`
-	PublicAddr string    `json:"public_addr,omitempty"`
-	Upstream   string    `json:"upstream"`
-	Priority   int       `json:"priority"`
-	Enabled    bool      `json:"enabled"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID                      int       `json:"id"`
+	Name                    string    `json:"name"`
+	PublicHost              string    `json:"public_host,omitempty"`
+	PublicAddr              string    `json:"public_addr,omitempty"`
+	Upstream                string    `json:"upstream"`
+	ForwardingMode          string    `json:"forwarding_mode"`
+	PingMOTD                string    `json:"ping_motd,omitempty"`
+	Priority                int       `json:"priority"`
+	Enabled                 bool      `json:"enabled"`
+	BungeeGuardAllowedToken string    `json:"bungeeguard_allowed_token"`
+	CreatedAt               time.Time `json:"created_at"`
+	UpdatedAt               time.Time `json:"updated_at"`
 }
 
 type PolicyInput struct {
@@ -133,13 +156,15 @@ type EvaluateAttemptResult struct {
 // For sqlite, it ensures the directory for the DB file exists.
 func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 	var (
-		driver = strings.ToLower(cfg.DBDriver)
-		dsn    = cfg.DSN
-		entDrv string
+		driver    = strings.ToLower(cfg.DBDriver)
+		sqlDriver string
+		dsn       = cfg.DSN
+		entDrv    string
 	)
 
 	switch driver {
 	case "sqlite":
+		sqlDriver = "sqlite"
 		entDrv = "sqlite3"
 		// Ensure directory exists if DSN is a file path.
 		if dsn != ":memory:" && dsn != "file::memory:?cache=shared" {
@@ -171,6 +196,9 @@ func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 			}
 		}
 	case "postgres":
+		// pgx/stdlib registers the database/sql driver as "pgx" while
+		// ent still needs the dialect name "postgres".
+		sqlDriver = "pgx"
 		entDrv = "postgres"
 		if dsn == "" {
 			return nil, errors.New("postgres dsn required (MCPROXY_POSTGRES_DSN)")
@@ -179,7 +207,7 @@ func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 		return nil, fmt.Errorf("unsupported db driver: %s", driver)
 	}
 
-	db, err := sql.Open(driver, dsn)
+	db, err := sql.Open(sqlDriver, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("sql open: %w", err)
 	}
@@ -210,8 +238,11 @@ func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 		return nil, fmt.Errorf("ent schema create: %w", err)
 	}
 
-	s := &Store{db: db, client: client, startedAt: time.Now(), cache: newSnapshotCache(), counters: newBucketCounter()}
-	dist, derr := newDistributedCoordinator(ctx, cfg.RedisAddr, cfg.RedisChannel, s.cache.invalidate)
+	s := &Store{db: db, client: client, startedAt: time.Now(), cache: newSnapshotCache(), counters: newBucketCounter(), blockReasons: make(map[string]int64), invalidations: make(chan struct{}, 1)}
+	dist, derr := newDistributedCoordinator(ctx, cfg.RedisAddr, cfg.RedisPassword, cfg.RedisTLS, cfg.RedisChannel, func() {
+		s.cache.invalidate()
+		s.notifyInvalidation()
+	})
 	if derr != nil {
 		_ = client.Close()
 		_ = db.Close()
@@ -221,6 +252,18 @@ func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 	s.audits = newAuditWriter(s)
 	_ = s.refreshSnapshots(ctx)
 	return s, nil
+}
+
+// Migrate applies the current Ent schema without starting the Redis
+// coordinator or Gate runtime. Normal application startup also calls the same
+// schema creation path, so this command is safe to run repeatedly.
+func Migrate(ctx context.Context, cfg config.Config) error {
+	cfg.RedisAddr = ""
+	st, err := Open(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	return st.Close()
 }
 
 func (s *Store) Close() error {
@@ -252,6 +295,10 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	if err != nil {
 		return Stats{}, err
 	}
+	enabledServers, err := s.client.Server.Query().Where(server.EnabledEQ(true)).Count(ctx)
+	if err != nil {
+		return Stats{}, err
+	}
 	policies, err := s.client.AccessPolicy.Query().Count(ctx)
 	if err != nil {
 		return Stats{}, err
@@ -273,7 +320,13 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 		return Stats{}, err
 	}
 	up := time.Since(s.startedAt) / time.Second
-	return Stats{UptimeSeconds: int64(up), Servers: servers, Policies: policies, Rules: rules, Counters: counters, Blocks: int64(blocked)}, nil
+	s.blockMu.RLock()
+	blockReasons := make(map[string]int64, len(s.blockReasons))
+	for reason, count := range s.blockReasons {
+		blockReasons[reason] = count
+	}
+	s.blockMu.RUnlock()
+	return Stats{UptimeSeconds: int64(up), Servers: servers, EnabledServers: enabledServers, Policies: policies, Rules: rules, Counters: counters, Blocks: int64(blocked), BlockReasons: blockReasons}, nil
 }
 
 // Health verifies that the backing database is reachable. It is intentionally
@@ -291,7 +344,13 @@ func (s *Store) ListServers(ctx context.Context) ([]ServerDTO, error) {
 		return nil, err
 	}
 	out := make([]ServerDTO, 0, len(nodes))
-	for _, n := range nodes {
+	for i, n := range nodes {
+		if !isValidBungeeGuardToken(n.BungeeguardAllowedToken) {
+			if nodes[i], err = s.ensureBungeeGuardToken(ctx, n); err != nil {
+				return nil, err
+			}
+			n = nodes[i]
+		}
 		out = append(out, serverDTO(n))
 	}
 	return out, nil
@@ -302,6 +361,11 @@ func (s *Store) GetServer(ctx context.Context, id int) (*ServerDTO, error) {
 	if err != nil {
 		return nil, err
 	}
+	if !isValidBungeeGuardToken(n.BungeeguardAllowedToken) {
+		if n, err = s.ensureBungeeGuardToken(ctx, n); err != nil {
+			return nil, err
+		}
+	}
 	dto := serverDTO(n)
 	return &dto, nil
 }
@@ -310,12 +374,19 @@ func (s *Store) CreateServer(ctx context.Context, in ServerInput) (*ServerDTO, e
 	if err := validateServerInput(in, true); err != nil {
 		return nil, err
 	}
-	b := s.client.Server.Create().SetName(strings.TrimSpace(in.Name)).SetUpstream(strings.TrimSpace(in.Upstream))
+	token, err := newBungeeGuardToken()
+	if err != nil {
+		return nil, fmt.Errorf("generate bungeeguard token: %w", err)
+	}
+	b := s.client.Server.Create().SetName(strings.TrimSpace(in.Name)).SetUpstream(strings.TrimSpace(in.Upstream)).SetForwardingMode(normalizeForwardingMode(in.ForwardingMode)).SetBungeeguardAllowedToken(token)
 	if in.PublicHost != nil {
 		b.SetPublicHost(strings.ToLower(strings.TrimSpace(*in.PublicHost)))
 	}
 	if in.PublicAddr != nil {
 		b.SetPublicAddr(strings.TrimSpace(*in.PublicAddr))
+	}
+	if in.PingMOTD != nil {
+		b.SetPingMotd(strings.TrimSpace(*in.PingMOTD))
 	}
 	if in.Priority != nil {
 		b.SetPriority(*in.Priority)
@@ -344,17 +415,34 @@ func (s *Store) UpdateServer(ctx context.Context, id int, in ServerInput) (*Serv
 	if v := strings.TrimSpace(in.Upstream); v != "" {
 		b.SetUpstream(v)
 	}
+	if in.ForwardingMode != nil {
+		b.SetForwardingMode(normalizeForwardingMode(in.ForwardingMode))
+	}
 	if in.PublicHost != nil {
 		b.SetPublicHost(strings.ToLower(strings.TrimSpace(*in.PublicHost)))
 	}
 	if in.PublicAddr != nil {
 		b.SetPublicAddr(strings.TrimSpace(*in.PublicAddr))
 	}
+	if in.PingMOTD != nil {
+		b.SetPingMotd(strings.TrimSpace(*in.PingMOTD))
+	}
 	if in.Priority != nil {
 		b.SetPriority(*in.Priority)
 	}
 	if in.Enabled != nil {
 		b.SetEnabled(*in.Enabled)
+	}
+	current, err := s.client.Server.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !isValidBungeeGuardToken(current.BungeeguardAllowedToken) {
+		token, tokenErr := newBungeeGuardToken()
+		if tokenErr != nil {
+			return nil, fmt.Errorf("generate bungeeguard token: %w", tokenErr)
+		}
+		b.SetBungeeguardAllowedToken(token)
 	}
 	n, err := b.Save(ctx)
 	if err != nil {
@@ -366,13 +454,54 @@ func (s *Store) UpdateServer(ctx context.Context, id int, in ServerInput) (*Serv
 	return &dto, nil
 }
 
-func (s *Store) DeleteServer(ctx context.Context, id int) error {
-	err := s.client.Server.DeleteOneID(id).Exec(ctx)
-	if err == nil {
-		s.cache.invalidate()
-		s.publishInvalidate(ctx)
+// RotateBungeeGuardToken replaces the per-backend token. The backend plugin's
+// allowed-tokens must be updated immediately after rotation.
+func (s *Store) RotateBungeeGuardToken(ctx context.Context, id int) (*ServerDTO, error) {
+	token, err := newBungeeGuardToken()
+	if err != nil {
+		return nil, fmt.Errorf("generate bungeeguard token: %w", err)
 	}
-	return err
+	n, err := s.client.Server.UpdateOneID(id).SetBungeeguardAllowedToken(token).Save(ctx)
+	if err != nil {
+		return nil, err
+	}
+	dto := serverDTO(n)
+	s.cache.invalidate()
+	s.publishInvalidate(ctx)
+	return &dto, nil
+}
+
+func (s *Store) DeleteServer(ctx context.Context, id int) error {
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	rollback := func(cause error) error {
+		_ = tx.Rollback()
+		return cause
+	}
+	if _, err := tx.AccessPolicy.Delete().Where(accesspolicy.HasServerWith(server.IDEQ(id))).Exec(ctx); err != nil {
+		return rollback(err)
+	}
+	if _, err := tx.Rule.Delete().Where(rule.HasServerWith(server.IDEQ(id))).Exec(ctx); err != nil {
+		return rollback(err)
+	}
+	if _, err := tx.Counter.Delete().Where(counter.HasServerWith(server.IDEQ(id))).Exec(ctx); err != nil {
+		return rollback(err)
+	}
+	// Preserve audit history while removing the foreign-key relationship.
+	if err := tx.Audit.Update().Where(audit.HasServerWith(server.IDEQ(id))).ClearServer().Exec(ctx); err != nil {
+		return rollback(err)
+	}
+	if err := tx.Server.DeleteOneID(id).Exec(ctx); err != nil {
+		return rollback(err)
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.cache.invalidate()
+	s.publishInvalidate(ctx)
+	return nil
 }
 
 func (s *Store) GetGlobalPolicy(ctx context.Context) (*PolicyDTO, error) {
@@ -461,6 +590,52 @@ func (s *Store) UpsertServerPolicy(ctx context.Context, serverID int, in PolicyI
 	return &dto, nil
 }
 
+// DeletePolicy removes a scoped override. A global policy is recreated with
+// schema defaults on the next read; a server policy falls back to global.
+func (s *Store) DeletePolicy(ctx context.Context, serverID *int) error {
+	var predicate entpredicate.AccessPolicy
+	if serverID == nil {
+		predicate = accesspolicy.Not(accesspolicy.HasServer())
+	} else {
+		if _, err := s.client.Server.Get(ctx, *serverID); err != nil {
+			return err
+		}
+		predicate = accesspolicy.HasServerWith(server.IDEQ(*serverID))
+	}
+	if _, err := s.client.AccessPolicy.Delete().Where(predicate).Exec(ctx); err != nil {
+		return err
+	}
+	s.cache.invalidate()
+	s.publishInvalidate(ctx)
+	return nil
+}
+
+// ResetGeoPolicy disables Geo filtering without changing threshold settings.
+func (s *Store) ResetGeoPolicy(ctx context.Context, serverID *int) error {
+	var predicate entpredicate.AccessPolicy
+	if serverID == nil {
+		predicate = accesspolicy.Not(accesspolicy.HasServer())
+	} else {
+		if _, err := s.client.Server.Get(ctx, *serverID); err != nil {
+			return err
+		}
+		predicate = accesspolicy.HasServerWith(server.IDEQ(*serverID))
+	}
+	policyNode, err := s.client.AccessPolicy.Query().Where(predicate).First(ctx)
+	if ent.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := s.client.AccessPolicy.UpdateOneID(policyNode.ID).SetGeoMode("disabled").ClearGeoList().Exec(ctx); err != nil {
+		return err
+	}
+	s.cache.invalidate()
+	s.publishInvalidate(ctx)
+	return nil
+}
+
 func (s *Store) GetGeoPolicy(ctx context.Context, serverID *int) (*PolicyDTO, error) {
 	if serverID == nil {
 		return s.GetGlobalPolicy(ctx)
@@ -498,6 +673,33 @@ func (s *Store) ListRules(ctx context.Context, serverID *int) ([]RuleDTO, error)
 	for _, n := range nodes {
 		dto := ruleDTO(n)
 		out = append(out, dto)
+	}
+	return out, nil
+}
+
+func (s *Store) ListAudits(ctx context.Context, limit, offset int, event string) ([]AuditDTO, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	q := s.client.Audit.Query().Order(ent.Desc(audit.FieldCreatedAt), ent.Desc(audit.FieldID)).Limit(limit).Offset(offset).WithServer()
+	if event = strings.TrimSpace(event); event != "" {
+		q = q.Where(audit.EventEQ(event))
+	}
+	nodes, err := q.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AuditDTO, 0, len(nodes))
+	for _, n := range nodes {
+		var serverID *int
+		if n.Edges.Server != nil {
+			id := n.Edges.Server.ID
+			serverID = &id
+		}
+		out = append(out, AuditDTO{ID: n.ID, Event: n.Event, Actor: n.Actor, ServerID: serverID, Details: n.Details, CreatedAt: n.CreatedAt})
 	}
 	return out, nil
 }
@@ -542,7 +744,17 @@ func (s *Store) DeleteRule(ctx context.Context, id int) error {
 }
 
 func (s *Store) EvaluateAttempt(ctx context.Context, in EvaluateAttemptInput) (*EvaluateAttemptResult, error) {
-	ip := net.ParseIP(strings.TrimSpace(in.IP))
+	rawIP := strings.TrimSpace(in.IP)
+	if len(rawIP) > 128 {
+		return nil, fmt.Errorf("ip is too long")
+	}
+	if len([]rune(strings.TrimSpace(in.Nickname))) > 128 {
+		return nil, fmt.Errorf("nickname is too long")
+	}
+	if len([]rune(strings.TrimSpace(in.Country))) > 16 {
+		return nil, fmt.Errorf("country is too long")
+	}
+	ip := net.ParseIP(rawIP)
 	if ip == nil {
 		return nil, fmt.Errorf("invalid ip")
 	}
@@ -629,7 +841,7 @@ func (s *Store) EvaluateAttempt(ctx context.Context, in EvaluateAttemptInput) (*
 }
 
 func serverDTO(n *ent.Server) ServerDTO {
-	publicHost := n.Name
+	publicHost := ""
 	if n.PublicHost != nil && strings.TrimSpace(*n.PublicHost) != "" {
 		publicHost = strings.TrimSpace(*n.PublicHost)
 	}
@@ -637,7 +849,53 @@ func serverDTO(n *ent.Server) ServerDTO {
 	if n.PublicAddr != nil {
 		publicAddr = strings.TrimSpace(*n.PublicAddr)
 	}
-	return ServerDTO{ID: n.ID, Name: n.Name, PublicHost: publicHost, PublicAddr: publicAddr, Upstream: n.Upstream, Priority: n.Priority, Enabled: n.Enabled, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt}
+	return ServerDTO{ID: n.ID, Name: n.Name, PublicHost: publicHost, PublicAddr: publicAddr, Upstream: n.Upstream, ForwardingMode: normalizeForwardingModeValue(n.ForwardingMode), PingMOTD: strings.TrimSpace(n.PingMotd), Priority: n.Priority, Enabled: n.Enabled, BungeeGuardAllowedToken: n.BungeeguardAllowedToken, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt}
+}
+
+func newBungeeGuardToken() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	const hex = "0123456789abcdef"
+	out := make([]byte, 32)
+	for i, value := range buf {
+		out[i*2] = hex[value>>4]
+		out[i*2+1] = hex[value&0x0f]
+	}
+	return string(out), nil
+}
+
+func isValidBungeeGuardToken(token string) bool {
+	if len(token) != 32 {
+		return false
+	}
+	for _, ch := range token {
+		if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Store) ensureBungeeGuardToken(ctx context.Context, n *ent.Server) (*ent.Server, error) {
+	token, err := newBungeeGuardToken()
+	if err != nil {
+		return nil, fmt.Errorf("generate bungeeguard token: %w", err)
+	}
+	updated, err := s.client.Server.UpdateOneID(n.ID).
+		Where(server.BungeeguardAllowedTokenEQ(n.BungeeguardAllowedToken)).
+		SetBungeeguardAllowedToken(token).
+		Save(ctx)
+	if err == nil {
+		return updated, nil
+	}
+	// Another request may have initialized the token first. Return the
+	// winner instead of overwriting it or failing a normal server listing.
+	if ent.IsNotFound(err) {
+		return s.client.Server.Get(ctx, n.ID)
+	}
+	return nil, err
 }
 
 func validateServerInput(in ServerInput, create bool) error {
@@ -655,6 +913,9 @@ func validateServerInput(in ServerInput, create bool) error {
 			return fmt.Errorf("upstream must be host:port")
 		}
 	}
+	if in.Priority != nil && (*in.Priority < 0 || *in.Priority > 1_000_000) {
+		return fmt.Errorf("priority must be between 0 and 1000000")
+	}
 	if in.PublicHost != nil && strings.TrimSpace(*in.PublicHost) != "" {
 		host := strings.TrimSpace(*in.PublicHost)
 		if strings.ContainsAny(host, "/?#@") || net.ParseIP(host) != nil {
@@ -666,7 +927,40 @@ func validateServerInput(in ServerInput, create bool) error {
 			return fmt.Errorf("public_addr must be host:port")
 		}
 	}
+	if in.PingMOTD != nil && len([]rune(strings.TrimSpace(*in.PingMOTD))) > 256 {
+		return fmt.Errorf("ping_motd is too long")
+	}
+	if in.ForwardingMode != nil && !isValidForwardingMode(*in.ForwardingMode) {
+		return fmt.Errorf("forwarding_mode must be one of none, legacy, velocity, or bungeeguard")
+	}
 	return nil
+}
+
+func normalizeForwardingMode(mode *string) string {
+	if mode == nil || strings.TrimSpace(*mode) == "" {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(*mode))
+}
+
+func normalizeForwardingModeValue(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		return ""
+	}
+	if !isValidForwardingMode(mode) {
+		return "legacy"
+	}
+	return mode
+}
+
+func isValidForwardingMode(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "none", "legacy", "velocity", "bungeeguard":
+		return true
+	default:
+		return false
+	}
 }
 
 func policyDTO(scope string, n *ent.AccessPolicy) PolicyDTO {
@@ -773,6 +1067,9 @@ func validateRuleInput(in RuleInput) error {
 	}
 	if strings.TrimSpace(in.Target) == "" {
 		return fmt.Errorf("target is required")
+	}
+	if len([]rune(strings.TrimSpace(in.Target))) > 256 {
+		return fmt.Errorf("target is too long")
 	}
 	if strings.HasPrefix(in.Kind, "ip-") {
 		if in.IsCIDR != nil && *in.IsCIDR {
@@ -1006,16 +1303,50 @@ func (s *Store) bumpCounter(ctx context.Context, serverID *int, kind, key string
 }
 
 func (s *Store) recordAudit(ctx context.Context, serverID *int, event string, details map[string]any) error {
-	_ = ctx
-	if s.audits != nil {
-		s.audits.enqueue(auditEvent{serverID: serverID, event: event, details: details})
-		return nil
-	}
-	return s.writeAudit(context.Background(), serverID, event, details)
+	return s.recordAuditAs(ctx, nil, serverID, event, details)
 }
 
-func (s *Store) writeAudit(ctx context.Context, serverID *int, event string, details map[string]any) error {
+// RecordAudit records an administrative event with its actor identity.
+// It is asynchronous under normal operation so control-plane writes stay fast.
+func (s *Store) RecordAudit(ctx context.Context, actor string, serverID *int, event string, details map[string]any) error {
+	actor = strings.TrimSpace(actor)
+	if actor == "" {
+		return s.recordAuditAs(ctx, nil, serverID, event, details)
+	}
+	return s.recordAuditAs(ctx, &actor, serverID, event, details)
+}
+
+func (s *Store) recordAuditAs(ctx context.Context, actor *string, serverID *int, event string, details map[string]any) error {
+	_ = ctx
+	if event == "connect.blocked" {
+		if reason, ok := details["reason"].(string); ok && reason != "" {
+			s.blockMu.Lock()
+			s.blockReasons[reason]++
+			s.blockMu.Unlock()
+		}
+	}
+	if s.audits != nil {
+		s.audits.enqueue(auditEvent{serverID: serverID, actor: actor, event: event, details: details})
+		return nil
+	}
+	return s.writeAudit(context.Background(), actor, serverID, event, details)
+}
+
+func (s *Store) writeAudit(ctx context.Context, actor *string, serverID *int, event string, details map[string]any) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("audit persistence panic: %v", recovered)
+		}
+	}()
+	safeDetails, ok := sanitizeAuditValue(details).(map[string]any)
+	if !ok {
+		safeDetails = map[string]any{}
+	}
+	details = safeDetails
 	b := s.client.Audit.Create().SetEvent(event).SetDetails(details)
+	if actor != nil {
+		b.SetActor(*actor)
+	}
 	if serverID != nil {
 		b.SetServerID(*serverID)
 	}
@@ -1023,7 +1354,28 @@ func (s *Store) writeAudit(ctx context.Context, serverID *int, event string, det
 }
 
 func (s *Store) publishInvalidate(ctx context.Context) {
+	s.notifyInvalidation()
 	if s.dist != nil {
 		s.dist.PublishInvalidate(ctx)
 	}
+}
+
+func (s *Store) notifyInvalidation() {
+	if s == nil || s.invalidations == nil {
+		return
+	}
+	select {
+	case s.invalidations <- struct{}{}:
+	default:
+	}
+}
+
+// Invalidations returns a coalescing notification channel for control-plane
+// changes. Gate uses it to refresh backend registrations immediately; the
+// periodic sync remains as a recovery path for missed notifications.
+func (s *Store) Invalidations() <-chan struct{} {
+	if s == nil {
+		return nil
+	}
+	return s.invalidations
 }

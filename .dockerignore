@@ -1,0 +1,17 @@
+.git
+.github
+.idea
+.env
+.env.*
+!.env.example
+data/*.db
+data/*.db-*
+bin
+admin-panel/node_modules
+admin-panel/.svelte-kit
+admin-panel/build
+admin-panel/.env
+admin-panel/.env.*
+!admin-panel/.env.example
+**/*.test
+*.log

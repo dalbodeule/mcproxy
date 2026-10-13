@@ -1,0 +1,54 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcproxy-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mcproxy
+  policyTypes:
+    - Ingress
+  ingress:
+    # The Minecraft listener is the only intentionally public port.
+    - ports:
+        - port: minecraft
+          protocol: TCP
+    # The admin panel may reach the HTTP API inside the namespace.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mcproxy-admin-panel
+      ports:
+        - port: http
+          protocol: TCP
+    # Label Prometheus pods with prometheus: "true" to scrape /metrics.
+    - from:
+        - podSelector:
+            matchLabels:
+              prometheus: "true"
+      ports:
+        - port: http
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcproxy-admin-panel-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mcproxy-admin-panel
+  policyTypes:
+    - Ingress
+  ingress:
+    # Adjust this namespace/label to match the cluster's TLS ingress controller.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - port: http
+          protocol: TCP
