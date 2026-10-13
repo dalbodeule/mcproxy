@@ -7,7 +7,7 @@ require (
 	github.com/go-chi/chi/v5 v5.2.5 // HTTP router
 	github.com/go-logr/logr v1.4.4
 	github.com/grafana/loki-client-go v0.0.0-20251015150631-c42bbddc310a
-	github.com/jackc/pgx/v5 v5.9.1 // PostgreSQL driver core
+	github.com/jackc/pgx/v5 v5.11.0 // PostgreSQL driver core
 	github.com/joho/godotenv v1.3.0
 	github.com/oschwald/geoip2-golang v1.13.0 // GeoIP reader
 	github.com/redis/go-redis/v9 v9.7.3
