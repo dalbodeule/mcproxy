@@ -7,20 +7,27 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /out/mcproxy ./cmd/mcproxy
+ARG MCPROXY_VERSION=dev
+ARG MCPROXY_COMMIT=unknown
+ARG MCPROXY_BUILD_TIME=unknown
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X mcproxy/internal/buildinfo.Version=${MCPROXY_VERSION} -X mcproxy/internal/buildinfo.Commit=${MCPROXY_COMMIT} -X mcproxy/internal/buildinfo.BuildTime=${MCPROXY_BUILD_TIME}" -o /out/mcproxy ./cmd/mcproxy
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /out/mcproxy-init ./cmd/mcproxy-init
 RUN mkdir -p /out/data && touch /out/data/.keep && chown -R 65532:65532 /out/data
 
 FROM gcr.io/distroless/base-debian13@sha256:389cad21f73e4c37b94ffe5b13736d5a92bd5bd3c6c6b38c2be1c881e14ba2bd AS runner
-WORKDIR /data
-
 COPY --from=builder /out/mcproxy /app/mcproxy
 COPY --from=builder /out/mcproxy-init /app/mcproxy-init
 COPY --from=builder --chown=nonroot:nonroot /out/data/ /data/
 
+WORKDIR /data
+
 ENV MCPROXY_HTTP_ADDR=0.0.0.0:8080
 ENV MCPROXY_SQLITE_PATH=/data/mcproxy.db
 VOLUME ["/data"]
+
+# Keep the standalone Docker deployment non-root as well as the Kubernetes
+# deployment. The data directory is prepared with this UID in the builder.
+USER nonroot:nonroot
 
 EXPOSE 8080 25565
 

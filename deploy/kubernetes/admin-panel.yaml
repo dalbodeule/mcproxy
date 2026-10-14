@@ -5,7 +5,7 @@ metadata:
   labels:
     app.kubernetes.io/name: mcproxy-admin-panel
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: mcproxy-admin-panel
@@ -14,7 +14,10 @@ spec:
       labels:
         app.kubernetes.io/name: mcproxy-admin-panel
     spec:
+      terminationGracePeriodSeconds: 30
       automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 1000
       containers:
         - name: admin-panel
           image: your-registry/mcproxy-admin-panel:replace-with-immutable-tag
@@ -26,6 +29,8 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: panel-data
+              mountPath: /data
           env:
             - name: MCPROXY_API_URL
               value: http://mcproxy-http:8080
@@ -34,8 +39,18 @@ spec:
                 secretKeyRef:
                   name: mcproxy-panel
                   key: admin-token
+            - name: MCPROXY_ADMIN_ACTOR_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mcproxy-panel
+                  key: admin-actor-secret
+                  optional: true
             - name: ORIGIN
               value: https://admin.example.com
+            # The ingress must overwrite X-Forwarded-Proto; do not expose this
+            # workload directly while trusting client-supplied forwarding headers.
+            - name: PROTOCOL_HEADER
+              value: x-forwarded-proto
             - name: ADMIN_PANEL_USERNAME
               valueFrom:
                 secretKeyRef:
@@ -51,16 +66,25 @@ spec:
                 secretKeyRef:
                   name: mcproxy-panel
                   key: session-secret
+            - name: ADMIN_PANEL_DB_PATH
+              value: /data/admin-panel.db
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
           readinessProbe:
             httpGet:
-              path: /login
+              path: /ready
               port: http
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
           livenessProbe:
             httpGet:
-              path: /login
+              path: /health
               port: http
             periodSeconds: 15
             timeoutSeconds: 3
@@ -84,6 +108,9 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
+        - name: panel-data
+          persistentVolumeClaim:
+            claimName: mcproxy-admin-panel-data
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -112,3 +139,15 @@ spec:
       port: 3000
       targetPort: http
       protocol: TCP
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mcproxy-admin-panel-data
+  labels:
+    app.kubernetes.io/name: mcproxy-admin-panel
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi

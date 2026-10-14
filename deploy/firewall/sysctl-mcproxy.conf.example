@@ -1,0 +1,8 @@
+# Optional Linux kernel baseline for a mcproxy host.
+# Review against RAM, expected concurrency, and the provider's conntrack
+# limits before applying. The conntrack/backlog values are intentionally
+# commented because there is no safe universal value.
+net.ipv4.tcp_syncookies = 1
+# net.ipv4.tcp_max_syn_backlog = 8192
+# net.core.somaxconn = 8192
+# net.netfilter.nf_conntrack_max = 262144

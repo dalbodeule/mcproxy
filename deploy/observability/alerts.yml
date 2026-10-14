@@ -1,6 +1,12 @@
 groups:
   - name: mcproxy
     rules:
+      - record: mcproxy:decision_block_ratio5m
+        expr: sum(rate(mcproxy_decision_blocks_total[5m])) / clamp_min(sum(rate(mcproxy_attempts_total[5m])), 1)
+
+      - record: mcproxy:decision_block_ratio_baseline1h
+        expr: avg_over_time(mcproxy:decision_block_ratio5m[1h])
+
       - alert: McproxyGateNotReady
         expr: mcproxy_gate_ready == 0
         for: 2m
@@ -17,6 +23,24 @@ groups:
         annotations:
           summary: "mcproxy metrics target is down"
           description: "Prometheus cannot scrape the mcproxy metrics endpoint for 2 minutes."
+
+      - alert: McproxyInvalidAdminActorSignature
+        expr: increase(mcproxy_admin_actor_signature_invalid_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "mcproxy rejected admin panel actor signatures"
+          description: "More than five invalid actor signatures were observed in five minutes. Verify the shared actor secret and investigate unauthorized or misconfigured panel requests."
+
+      - alert: McproxyAuditWriteFailed
+        expr: increase(mcproxy_audit_write_errors_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "mcproxy failed to persist an audit event"
+          description: "At least one audit persistence operation failed in the last five minutes. Inspect database health and storage immediately because administrative or security events may be missing."
 
       - alert: McproxyNoEnabledServers
         expr: mcproxy_enabled_servers == 0
@@ -44,3 +68,111 @@ groups:
         annotations:
           summary: "mcproxy block rate is elevated"
           description: "mcproxy is blocking more than 10 connection attempts per second over 10 minutes."
+
+      - alert: McproxyConnectionFlood
+        expr: sum(rate(mcproxy_attempts_total[1m])) > 100
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "mcproxy connection attempt rate is elevated"
+          description: "More than 100 evaluated connection attempts per second have been observed for 2 minutes. Tune this example threshold to the deployment's normal peak before enabling notifications."
+
+      - alert: McproxyServerConnectionFlood
+        expr: max by (server_id) (rate(mcproxy_server_attempts_total[1m])) > 25
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "mcproxy traffic is concentrated on one server"
+          description: "A configured server has received more than 25 evaluated attempts per second for 2 minutes. Confirm the route, backend capacity, and source distribution before changing policy."
+
+      - alert: McproxyEvaluationLatencyHigh
+        expr: rate(mcproxy_evaluation_latency_seconds_total[5m]) / clamp_min(rate(mcproxy_evaluation_latency_seconds_count[5m]), 1) > 0.25 and rate(mcproxy_evaluation_latency_seconds_count[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "mcproxy policy evaluation latency is high"
+          description: "Average policy evaluation time has exceeded 250ms for 5 minutes; inspect database, Redis coordination, and snapshot refresh metrics."
+
+      - alert: McproxySnapshotRefreshLatencyHigh
+        expr: rate(mcproxy_snapshot_refresh_latency_seconds_total[5m]) / clamp_min(rate(mcproxy_snapshot_refreshes_total[5m]), 1) > 1 and rate(mcproxy_snapshot_refreshes_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "mcproxy snapshot refresh latency is high"
+          description: "Successful policy/rule snapshot refreshes are taking more than one second on average; inspect database latency and control-plane churn."
+
+      - alert: McproxyDatabasePoolContention
+        expr: rate(mcproxy_db_wait_duration_seconds_total[5m]) > 0.25 and rate(mcproxy_db_wait_count_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "mcproxy database pool is contended"
+          description: "Database callers have spent more than 250ms per second waiting for a pool connection; inspect query latency, pool sizing, and database capacity."
+
+      - alert: McproxyDatabasePoolExhausted
+        expr: mcproxy_db_open_connections > 0 and mcproxy_db_in_use_connections >= mcproxy_db_open_connections and rate(mcproxy_db_wait_count_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "mcproxy database pool is exhausted"
+          description: "All open database connections are in use while callers are waiting. Inspect slow queries, pool sizing, and database capacity immediately."
+
+      - alert: McproxyStoreStatsLatencyHigh
+        expr: rate(mcproxy_store_stats_latency_seconds_total[5m]) / clamp_min(rate(mcproxy_store_stats_latency_seconds_count[5m]), 1) > 0.5 and rate(mcproxy_store_stats_latency_seconds_count[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "mcproxy control-plane database reads are slow"
+          description: "Database-backed store stats reads have exceeded 500ms on average; inspect database query latency, pool contention, and control-plane load."
+
+      - alert: McproxyHighDecisionBlockRatio
+        expr: sum(rate(mcproxy_decision_blocks_total[5m])) / clamp_min(sum(rate(mcproxy_attempts_total[5m])), 1) > 0.50 and sum(rate(mcproxy_attempts_total[5m])) > 5
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "mcproxy is blocking most evaluated connection attempts"
+          description: "More than half of evaluated attempts have been blocked for 5 minutes with at least 5 attempts per second. Verify the policy, source distribution, and backend health before enabling stricter protection."
+
+      - alert: McproxyAdaptiveDecisionBlockRatio
+        expr: mcproxy:decision_block_ratio5m > clamp_min(mcproxy:decision_block_ratio_baseline1h + 0.25, 0.50) and sum(rate(mcproxy_attempts_total[5m])) > 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "mcproxy decision block ratio is above its recent baseline"
+          description: "The 5-minute decision block ratio is at least 25 percentage points above the one-hour baseline and above the 50% floor. Treat this as an operator review signal; it does not change policy automatically."
+
+      - alert: McproxySnapshotCacheStale
+        expr: mcproxy_snapshot_cache_age_seconds > 30
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "mcproxy policy snapshot cache is stale"
+          description: "The policy/rule snapshot has not refreshed for more than 30 seconds; inspect database health and control-plane invalidation delivery."
+
+      - alert: McproxyDistributedCoordinationDegraded
+        expr: mcproxy_distributed_enabled == 1 and (mcproxy_distributed_healthy == 0 or increase(mcproxy_distributed_publish_errors_total[5m]) > 0)
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "mcproxy Redis coordination is degraded"
+          description: "mcproxy has observed Redis coordination errors and may be enforcing counters locally, which can weaken multi-instance protection."
+
+      - alert: McproxyDistributedFailClosed
+        expr: mcproxy_distributed_enabled == 1 and mcproxy_distributed_fail_closed == 1 and mcproxy_distributed_healthy == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "mcproxy is fail-closed while Redis coordination is unhealthy"
+          description: "New policy evaluations may be rejected because Redis is unhealthy and MCPROXY_REDIS_FAIL_CLOSED is enabled. Restore Redis or deliberately switch to the availability-first mode."

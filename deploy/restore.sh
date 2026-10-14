@@ -15,8 +15,21 @@ if [[ "${RESTORE_CONFIRM:-}" != "mcproxy-restore" ]]; then
   exit 2
 fi
 
+if [[ -f "${backup_file}.sha256" ]]; then
+  expected="$(awk '{print $1}' "${backup_file}.sha256")"
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "${backup_file}" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    actual="$(shasum -a 256 "${backup_file}" | awk '{print $1}')"
+  else
+    echo "cannot verify ${backup_file}.sha256: neither sha256sum nor shasum is installed" >&2
+    exit 2
+  fi
+  [[ -n "$expected" && "$actual" == "$expected" ]] || { echo "refusing restore: backup checksum mismatch" >&2; exit 2; }
+fi
+
 echo "Restoring ${backup_file} into ${pg_database} via ${compose_file}."
 echo "This replaces objects in the target database."
 docker compose -f "${compose_file}" exec -T postgres \
   pg_restore -U "${pg_user}" -d "${pg_database}" \
-  --clean --if-exists --no-owner --no-privileges < "${backup_file}"
+  --clean --if-exists --exit-on-error --no-owner --no-privileges < "${backup_file}"

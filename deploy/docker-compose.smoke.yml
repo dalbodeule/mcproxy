@@ -5,3 +5,10 @@ services:
     # Compose's !reset tag removes the production port mapping instead of
     # merging with it. This keeps smoke tests independent of host port 25565.
     ports: !reset []
+    environment:
+      # A developer's .env may intentionally use the now-invalid global
+      # bungeeguard mode. Keep this fixture on a valid global fallback so the
+      # smoke test exercises PostgreSQL/Redis readiness rather than that
+      # configuration guard.
+      MCPROXY_GATE_FORWARDING_MODE: legacy
+      MCPROXY_REDIS_FAIL_CLOSED: "true"

@@ -6,6 +6,13 @@
 !.env.example
 data/*.db
 data/*.db-*
+backups
+*.db
+*.db-*
+*.dump
+*.dump.sha256
+*.sql
+*.sql.sha256
 bin
 admin-panel/node_modules
 admin-panel/.svelte-kit

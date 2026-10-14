@@ -4,6 +4,16 @@
 ### dotenv ###
 .env
 
+# Local runtime state and backup artifacts
+/data/
+/backups/
+*.db
+*.db-*
+*.dump
+*.dump.sha256
+*.sql
+*.sql.sha256
+
 ### SvelteKit admin panel ###
 admin-panel/node_modules/
 admin-panel/.svelte-kit/
@@ -17,6 +27,7 @@ admin-panel/.env.*
 # https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
 #
 # Binaries for programs and plugins
+/bin/
 *.exe
 *.exe~
 *.dll
@@ -225,5 +236,3 @@ $RECYCLE.BIN/
 # End of https://www.toptal.com/developers/gitignore/api/go,goland,dotenv,windows,linux,macos
 
 *.mmdb
-bin/
-data/

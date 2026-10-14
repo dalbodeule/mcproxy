@@ -11,12 +11,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    # mcproxy-init starts as root only long enough to chown the mounted /data
-    # volume and drop to UID/GID 65532 before exec'ing the application.
-    cap_add:
-      - CHOWN
-      - SETUID
-      - SETGID
+    # The image is already pinned to nonroot:nonroot. Mounted /data volumes
+    # must therefore be provisioned writable by UID/GID 65532.
     env_file:
       - path: ../.env
         required: false
@@ -27,6 +23,10 @@ services:
       MCPROXY_POSTGRES_DSN: postgres://mcproxy:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/mcproxy?sslmode=${POSTGRES_SSLMODE:-disable}
       MCPROXY_REDIS_ADDR: redis:6379
       MCPROXY_REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+      # Redis is part of the production protection boundary in this stack.
+      # Set MCPROXY_REDIS_FAIL_CLOSED=false only when availability during a
+      # Redis outage is the deliberate operational choice.
+      MCPROXY_REDIS_FAIL_CLOSED: ${MCPROXY_REDIS_FAIL_CLOSED:-true}
       MCPROXY_SQLITE_PATH: /data/mcproxy.db
     ports:
       - "25565:25565"

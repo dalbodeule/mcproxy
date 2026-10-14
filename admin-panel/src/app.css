@@ -9,3 +9,45 @@ body {
 	margin: 0;
 	min-width: 320px;
 }
+
+:focus-visible {
+	outline: 2px solid #22d3ee;
+	outline-offset: 3px;
+}
+
+button, a, input, select, textarea {
+	transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease, opacity 150ms ease;
+}
+
+/* Keep the normal dark palette intact while making boundaries and muted text
+ * much easier to distinguish for low-vision and bright-room use. */
+body.high-contrast {
+	background: #000;
+	color: #fff;
+}
+
+body.high-contrast .bg-slate-950,
+body.high-contrast .bg-slate-900,
+body.high-contrast .bg-slate-950\/40,
+body.high-contrast .bg-slate-950\/50,
+body.high-contrast .bg-slate-950\/60,
+body.high-contrast .bg-slate-900\/70,
+body.high-contrast .bg-slate-900\/80 {
+	background-color: #000;
+}
+
+body.high-contrast .text-slate-500,
+body.high-contrast .text-slate-600,
+body.high-contrast .text-slate-400 {
+	color: #e2e8f0;
+}
+
+body.high-contrast .text-slate-300,
+body.high-contrast .text-slate-200 {
+	color: #fff;
+}
+
+body.high-contrast [class*="border-slate-"],
+body.high-contrast [class*="border-gray-"] {
+	border-color: #94a3b8;
+}

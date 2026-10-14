@@ -14,8 +14,12 @@ type bucketCounter struct {
 }
 
 type windowBucket struct {
-	start time.Time
-	count int
+	start  time.Time
+	count  int // retained for compatibility with stale-bucket tests/debugging
+	window int
+	slots  []int
+	slotAt int64
+	total  int
 }
 
 func newBucketCounter() *bucketCounter {
@@ -30,21 +34,46 @@ func (c *bucketCounter) bump(scope string, serverID *int, kind, key string, wind
 	c.operations++
 	if c.operations%256 == 0 || c.lastCleanupAt.IsZero() || now.Sub(c.lastCleanupAt) >= 30*time.Second {
 		for name, bucket := range c.buckets {
-			if now.Sub(bucket.start) >= 2*time.Minute {
+			if now.Sub(bucket.start) >= 2*time.Minute || (bucket.window > 0 && now.Sub(bucket.start) >= time.Duration(bucket.window+60)*time.Second) {
 				delete(c.buckets, name)
 			}
 		}
 		c.lastCleanupAt = now
 	}
 	b, ok := c.buckets[composite]
-	if !ok || now.Sub(b.start) >= time.Duration(windowSec)*time.Second {
-		b = &windowBucket{start: now, count: 0}
+	if windowSec < 1 {
+		windowSec = 1
+	}
+	if !ok || b.window != windowSec {
+		b = &windowBucket{start: now, window: windowSec, slots: make([]int, windowSec), slotAt: now.Unix()}
 		c.buckets[composite] = b
 	}
-	if record {
-		b.count++
+	// Keep one counter per second. This avoids fixed-window boundary bursts
+	// while keeping the hot path allocation-free after a key is initialized.
+	currentSlot := now.Unix()
+	if currentSlot > b.slotAt {
+		advance := currentSlot - b.slotAt
+		if advance >= int64(len(b.slots)) {
+			for i := range b.slots {
+				b.slots[i] = 0
+			}
+			b.total = 0
+		} else {
+			for i := int64(1); i <= advance; i++ {
+				idx := int((b.slotAt + i) % int64(len(b.slots)))
+				b.total -= b.slots[idx]
+				b.slots[idx] = 0
+			}
+		}
+		b.slotAt = currentSlot
 	}
-	return b.count
+	if record {
+		idx := int(currentSlot % int64(len(b.slots)))
+		b.slots[idx]++
+		b.total++
+	}
+	b.count = b.total
+	return b.total
 }
 
 func (c *bucketCounter) size() int {

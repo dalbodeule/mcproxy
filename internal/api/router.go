@@ -1,20 +1,27 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"mcproxy/internal/buildinfo"
 	"mcproxy/internal/config"
 	"mcproxy/internal/ent"
 	"mcproxy/internal/geo"
@@ -33,6 +40,20 @@ type Dependencies struct {
 	GateStats func() (players, backends int)
 }
 
+type adminActorContextKey struct{}
+
+const maxJSONBodyBytes int64 = 1 << 20
+const maxAuditOffset = 1_000_000
+
+var invalidAdminActorSignatures atomic.Uint64
+
+func adminActor(ctx context.Context) string {
+	if actor, ok := ctx.Value(adminActorContextKey{}).(string); ok && actor != "" {
+		return actor
+	}
+	return "admin-api"
+}
+
 func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 	r := chi.NewRouter()
 
@@ -45,10 +66,11 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 		securityHeaders,
 		cors(cfg.AdminAllowedOrigins),
 	}
-	if cfg.TrustProxyHeaders {
-		// Only enable this when a trusted reverse proxy strips and rewrites
-		// client IP headers. Otherwise clients can spoof the rate-limit key.
-		middlewares = append([]func(http.Handler) http.Handler{middleware.RealIP}, middlewares...)
+	if cfg.TrustProxyHeaders && len(cfg.TrustedProxyCIDRs) > 0 {
+		// Only trust forwarded client IP headers when the immediate peer is in
+		// an explicitly configured proxy network. chi.RealIP trusts headers from
+		// every peer, which is unsafe when this listener is internet-facing.
+		middlewares = append([]func(http.Handler) http.Handler{trustedProxyRealIP(cfg.TrustedProxyCIDRs)}, middlewares...)
 	}
 	r.Use(middlewares...)
 
@@ -61,6 +83,19 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 	r.Get("/ready", func(w http.ResponseWriter, r *http.Request) {
 		if deps.Store == nil || deps.Store.Health(r.Context()) != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "not_ready"})
+			return
+		}
+		distributed := deps.Store.DistributedMetrics()
+		if distributed.Enabled && distributed.FailClosed {
+			if err := deps.Store.CheckDistributed(r.Context()); err != nil {
+				observability.Warn("ready_distributed_check_failed", "error", err)
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "distributed_not_ready"})
+				return
+			}
+			distributed = deps.Store.DistributedMetrics()
+		}
+		if distributed.Enabled && distributed.FailClosed && !distributed.Healthy {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "distributed_not_ready"})
 			return
 		}
 		if deps.GateReady != nil && !deps.GateReady() {
@@ -80,6 +115,10 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		_, _ = io.WriteString(w, "# HELP mcproxy_build_info Build metadata for the running mcproxy process.\n# TYPE mcproxy_build_info gauge\n")
+		_, _ = io.WriteString(w, "mcproxy_build_info{version=\""+promEscape(buildinfo.Version)+"\",commit=\""+promEscape(buildinfo.Commit)+"\",build_time=\""+promEscape(buildinfo.BuildTime)+"\",go_version=\""+promEscape(runtime.Version())+"\"} 1\n")
+		_, _ = io.WriteString(w, "# HELP mcproxy_admin_actor_signature_invalid_total Invalid panel actor signatures observed while actor signing is enabled.\n# TYPE mcproxy_admin_actor_signature_invalid_total counter\n")
+		_, _ = io.WriteString(w, "mcproxy_admin_actor_signature_invalid_total "+strconv.FormatUint(invalidAdminActorSignatures.Load(), 10)+"\n")
 		_, _ = io.WriteString(w, "# HELP mcproxy_uptime_seconds Process uptime in seconds.\n# TYPE mcproxy_uptime_seconds gauge\n")
 		_, _ = io.WriteString(w, "mcproxy_uptime_seconds "+strconv.FormatInt(st.UptimeSeconds, 10)+"\n")
 		_, _ = io.WriteString(w, "# TYPE mcproxy_servers gauge\nmcproxy_servers "+strconv.Itoa(st.Servers)+"\n")
@@ -88,9 +127,79 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 		_, _ = io.WriteString(w, "# TYPE mcproxy_rules gauge\nmcproxy_rules "+strconv.Itoa(st.Rules)+"\n")
 		_, _ = io.WriteString(w, "# TYPE mcproxy_counters gauge\nmcproxy_counters "+strconv.Itoa(st.Counters)+"\n")
 		_, _ = io.WriteString(w, "# TYPE mcproxy_blocks_total counter\nmcproxy_blocks_total "+strconv.FormatInt(st.Blocks, 10)+"\n")
+		_, _ = io.WriteString(w, "# HELP mcproxy_attempts_total Valid connection attempts evaluated by the policy engine.\n# TYPE mcproxy_attempts_total counter\n")
+		_, _ = io.WriteString(w, "mcproxy_attempts_total "+strconv.FormatInt(st.Attempts, 10)+"\n")
+		_, _ = io.WriteString(w, "# HELP mcproxy_allowed_total Connection attempts allowed by the policy engine.\n# TYPE mcproxy_allowed_total counter\n")
+		_, _ = io.WriteString(w, "mcproxy_allowed_total "+strconv.FormatInt(st.Allowed, 10)+"\n")
+		_, _ = io.WriteString(w, "# HELP mcproxy_decision_blocks_total Connection attempts blocked by the policy engine since process start.\n# TYPE mcproxy_decision_blocks_total counter\n")
+		_, _ = io.WriteString(w, "mcproxy_decision_blocks_total "+strconv.FormatInt(st.DecisionBlocks, 10)+"\n")
 		for reason, count := range st.BlockReasons {
 			_, _ = io.WriteString(w, "mcproxy_blocks_by_reason_total{reason=\""+promEscape(reason)+"\"} "+strconv.FormatInt(count, 10)+"\n")
 		}
+		evaluation := deps.Store.EvaluationMetrics()
+		_, _ = io.WriteString(w, "# HELP mcproxy_evaluation_latency_seconds_total Total policy evaluation time since process start.\n# TYPE mcproxy_evaluation_latency_seconds_total counter\n")
+		_, _ = io.WriteString(w, "mcproxy_evaluation_latency_seconds_total "+strconv.FormatFloat(evaluation.DurationSeconds, 'f', 6, 64)+"\n")
+		_, _ = io.WriteString(w, "# HELP mcproxy_evaluation_latency_seconds_count Number of valid policy evaluations observed.\n# TYPE mcproxy_evaluation_latency_seconds_count counter\n")
+		_, _ = io.WriteString(w, "mcproxy_evaluation_latency_seconds_count "+strconv.FormatInt(evaluation.DurationCount, 10)+"\n")
+		_, _ = io.WriteString(w, "# HELP mcproxy_server_attempts_total Valid policy evaluations by configured server.\n# TYPE mcproxy_server_attempts_total counter\n")
+		for serverID, count := range evaluation.ServerAttempts {
+			_, _ = io.WriteString(w, "mcproxy_server_attempts_total{server_id=\""+strconv.Itoa(serverID)+"\"} "+strconv.FormatInt(count, 10)+"\n")
+		}
+		_, _ = io.WriteString(w, "# HELP mcproxy_snapshot_refresh_latency_seconds_total Total snapshot refresh time since process start.\n# TYPE mcproxy_snapshot_refresh_latency_seconds_total counter\n")
+		_, _ = io.WriteString(w, "mcproxy_snapshot_refresh_latency_seconds_total "+strconv.FormatFloat(evaluation.SnapshotDurationSeconds, 'f', 6, 64)+"\n")
+		_, _ = io.WriteString(w, "# HELP mcproxy_snapshot_refreshes_total Successful snapshot refreshes since process start.\n# TYPE mcproxy_snapshot_refreshes_total counter\n")
+		_, _ = io.WriteString(w, "mcproxy_snapshot_refreshes_total "+strconv.FormatUint(evaluation.SnapshotRefreshes, 10)+"\n")
+		db := deps.Store.DatabaseMetrics()
+		storeLatency := deps.Store.StoreLatencyMetrics()
+		_, _ = io.WriteString(w, "# HELP mcproxy_store_stats_latency_seconds_total Total duration of database-backed store stats operations since process start.\n# TYPE mcproxy_store_stats_latency_seconds_total counter\n")
+		_, _ = io.WriteString(w, "mcproxy_store_stats_latency_seconds_total "+strconv.FormatFloat(storeLatency.StatsDurationSeconds, 'f', 6, 64)+"\n")
+		_, _ = io.WriteString(w, "# HELP mcproxy_store_stats_latency_seconds_count Number of database-backed store stats operations observed.\n# TYPE mcproxy_store_stats_latency_seconds_count counter\n")
+		_, _ = io.WriteString(w, "mcproxy_store_stats_latency_seconds_count "+strconv.FormatInt(storeLatency.StatsDurationCount, 10)+"\n")
+		audit := deps.Store.AuditMetrics()
+		_, _ = io.WriteString(w, "# HELP mcproxy_audit_write_errors_total Audit persistence failures since process start.\n# TYPE mcproxy_audit_write_errors_total counter\n")
+		_, _ = io.WriteString(w, "mcproxy_audit_write_errors_total "+strconv.FormatInt(audit.WriteErrors, 10)+"\n")
+		_, _ = io.WriteString(w, "# HELP mcproxy_db_open_connections Current database pool open connections.\n# TYPE mcproxy_db_open_connections gauge\n")
+		_, _ = io.WriteString(w, "mcproxy_db_open_connections "+strconv.Itoa(db.OpenConnections)+"\n")
+		_, _ = io.WriteString(w, "# HELP mcproxy_db_in_use_connections Current database pool connections in use.\n# TYPE mcproxy_db_in_use_connections gauge\n")
+		_, _ = io.WriteString(w, "mcproxy_db_in_use_connections "+strconv.Itoa(db.InUse)+"\n")
+		_, _ = io.WriteString(w, "# HELP mcproxy_db_idle_connections Current database pool idle connections.\n# TYPE mcproxy_db_idle_connections gauge\n")
+		_, _ = io.WriteString(w, "mcproxy_db_idle_connections "+strconv.Itoa(db.Idle)+"\n")
+		_, _ = io.WriteString(w, "# HELP mcproxy_db_wait_count_total Database pool waits since process start.\n# TYPE mcproxy_db_wait_count_total counter\n")
+		_, _ = io.WriteString(w, "mcproxy_db_wait_count_total "+strconv.FormatInt(db.WaitCount, 10)+"\n")
+		_, _ = io.WriteString(w, "# HELP mcproxy_db_wait_duration_seconds_total Database pool wait duration since process start.\n# TYPE mcproxy_db_wait_duration_seconds_total counter\n")
+		_, _ = io.WriteString(w, "mcproxy_db_wait_duration_seconds_total "+strconv.FormatFloat(db.WaitDuration.Seconds(), 'f', 6, 64)+"\n")
+		cache := deps.Store.CacheMetrics()
+		_, _ = io.WriteString(w, "# HELP mcproxy_snapshot_cache_hits_total Snapshot cache hits.\n# TYPE mcproxy_snapshot_cache_hits_total counter\n")
+		_, _ = io.WriteString(w, "mcproxy_snapshot_cache_hits_total "+strconv.FormatUint(cache.Hits, 10)+"\n")
+		_, _ = io.WriteString(w, "# HELP mcproxy_snapshot_cache_misses_total Snapshot cache refreshes or misses.\n# TYPE mcproxy_snapshot_cache_misses_total counter\n")
+		_, _ = io.WriteString(w, "mcproxy_snapshot_cache_misses_total "+strconv.FormatUint(cache.Misses, 10)+"\n")
+		_, _ = io.WriteString(w, "# HELP mcproxy_snapshot_cache_age_seconds Age of the current policy/rule snapshot.\n# TYPE mcproxy_snapshot_cache_age_seconds gauge\n")
+		_, _ = io.WriteString(w, "mcproxy_snapshot_cache_age_seconds "+strconv.FormatFloat(cache.AgeSeconds, 'f', 3, 64)+"\n")
+		distributed := deps.Store.DistributedMetrics()
+		distributedEnabled := 0
+		if distributed.Enabled {
+			distributedEnabled = 1
+		}
+		distributedFailClosed := 0
+		if distributed.FailClosed {
+			distributedFailClosed = 1
+		}
+		distributedHealthy := 0
+		if distributed.Healthy {
+			distributedHealthy = 1
+		}
+		_, _ = io.WriteString(w, "# HELP mcproxy_distributed_enabled Whether Redis-backed distributed coordination is configured.\n# TYPE mcproxy_distributed_enabled gauge\n")
+		_, _ = io.WriteString(w, "mcproxy_distributed_enabled "+strconv.Itoa(distributedEnabled)+"\n")
+		_, _ = io.WriteString(w, "# HELP mcproxy_distributed_healthy Whether Redis-backed coordination is currently healthy. Disabled coordination is reported healthy.\n# TYPE mcproxy_distributed_healthy gauge\n")
+		_, _ = io.WriteString(w, "mcproxy_distributed_healthy "+strconv.Itoa(distributedHealthy)+"\n")
+		_, _ = io.WriteString(w, "# HELP mcproxy_distributed_fail_closed Whether Redis counter failures deny new evaluations.\n# TYPE mcproxy_distributed_fail_closed gauge\n")
+		_, _ = io.WriteString(w, "mcproxy_distributed_fail_closed "+strconv.Itoa(distributedFailClosed)+"\n")
+		_, _ = io.WriteString(w, "# HELP mcproxy_distributed_errors_total Redis coordination errors since process start.\n# TYPE mcproxy_distributed_errors_total counter\n")
+		_, _ = io.WriteString(w, "mcproxy_distributed_errors_total "+strconv.FormatInt(distributed.Errors, 10)+"\n")
+		_, _ = io.WriteString(w, "# HELP mcproxy_distributed_fallbacks_total Requests that fell back to local coordination since process start.\n# TYPE mcproxy_distributed_fallbacks_total counter\n")
+		_, _ = io.WriteString(w, "mcproxy_distributed_fallbacks_total "+strconv.FormatInt(distributed.Fallbacks, 10)+"\n")
+		_, _ = io.WriteString(w, "# HELP mcproxy_distributed_publish_errors_total Redis cache invalidation publish errors since process start.\n# TYPE mcproxy_distributed_publish_errors_total counter\n")
+		_, _ = io.WriteString(w, "mcproxy_distributed_publish_errors_total "+strconv.FormatInt(distributed.PublishErrors, 10)+"\n")
 		if deps.GateReady != nil {
 			gateReady := 0
 			if deps.GateReady() {
@@ -111,7 +220,7 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Use(middleware.ThrottleBacklog(cfg.AdminThrottle, cfg.AdminThrottle*2, 30*time.Second))
 		api.Use(limitBody(1 << 20))
-		api.Use(adminAuth(cfg.AdminToken))
+		api.Use(adminAuth(cfg.AdminToken, cfg.AdminActorSecret))
 
 		api.Get("/stats", func(w http.ResponseWriter, r *http.Request) {
 			st, err := deps.Store.Stats(r.Context())
@@ -125,11 +234,19 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 		})
 		api.Get("/audits", func(w http.ResponseWriter, r *http.Request) {
 			limit, offset := queryPage(r)
-			items, err := deps.Store.ListAudits(r.Context(), limit, offset, r.URL.Query().Get("event"))
+			serverIDs, ok := queryIntList(w, r, "server_id")
+			if !ok {
+				return
+			}
+			items, err := deps.Store.ListAudits(r.Context(), limit+1, offset, r.URL.Query().Get("event"), serverIDs)
 			if handleStoreError(w, "list audits", err) {
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"items": items, "limit": limit, "offset": offset})
+			hasMore := len(items) > limit
+			if hasMore {
+				items = items[:limit]
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"items": items, "has_more": hasMore, "limit": limit, "offset": offset})
 		})
 
 		api.Route("/servers", func(sr chi.Router) {
@@ -156,7 +273,7 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 					internalError(w, "create server", err)
 					return
 				}
-				recordAdminAudit(r.Context(), deps.Store, "server.create", nil, map[string]any{"server_id": item.ID, "name": item.Name, "upstream": item.Upstream, "forwarding_mode": item.ForwardingMode})
+				recordAdminAudit(r.Context(), deps.Store, "server.create", &item.ID, map[string]any{"server_id": item.ID, "name": item.Name, "upstream": item.Upstream, "forwarding_mode": item.ForwardingMode})
 				writeJSON(w, http.StatusCreated, item)
 			})
 			sr.Route("/{serverID}", func(sr chi.Router) {
@@ -185,7 +302,7 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 					if handleStoreError(w, "update server", err) {
 						return
 					}
-					recordAdminAudit(r.Context(), deps.Store, "server.update", nil, map[string]any{"server_id": id, "name": item.Name, "upstream": item.Upstream, "forwarding_mode": item.ForwardingMode, "enabled": item.Enabled})
+					recordAdminAudit(r.Context(), deps.Store, "server.update", &id, map[string]any{"server_id": id, "name": item.Name, "upstream": item.Upstream, "forwarding_mode": item.ForwardingMode, "enabled": item.Enabled})
 					writeJSON(w, http.StatusOK, item)
 				})
 				sr.Post("/bungeeguard-token", func(w http.ResponseWriter, r *http.Request) {
@@ -209,6 +326,9 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 					if handleStoreError(w, "delete server", err) {
 						return
 					}
+					// DeleteServer clears the optional audit->server relation before
+					// removing the server. Keep the id in details, but do not enqueue
+					// a dangling foreign-key reference after the deletion commits.
 					recordAdminAudit(r.Context(), deps.Store, "server.delete", nil, map[string]any{"server_id": id})
 					w.WriteHeader(http.StatusNoContent)
 				})
@@ -370,10 +490,11 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 				if !ok {
 					return
 				}
-				if err := deps.Store.DeleteRule(r.Context(), id); handleStoreError(w, "delete rule", err) {
+				item, err := deps.Store.DeleteRule(r.Context(), id)
+				if handleStoreError(w, "delete rule", err) {
 					return
 				}
-				recordAdminAudit(r.Context(), deps.Store, "rule.delete", nil, map[string]any{"rule_id": id})
+				recordAdminAudit(r.Context(), deps.Store, "rule.delete", item.ServerID, map[string]any{"rule_id": id, "kind": item.Kind, "target": item.Target})
 				w.WriteHeader(http.StatusNoContent)
 			})
 		})
@@ -387,6 +508,13 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 			if strings.TrimSpace(in.Country) == "" && deps.Geo != nil {
 				if ip := net.ParseIP(strings.TrimSpace(in.IP)); ip != nil {
 					in.Country = deps.Geo.CountryCode(ip)
+					if strings.TrimSpace(in.ASN) == "" {
+						in.ASN = deps.Geo.ASN(ip)
+					}
+				}
+			} else if strings.TrimSpace(in.ASN) == "" && deps.Geo != nil {
+				if ip := net.ParseIP(strings.TrimSpace(in.IP)); ip != nil {
+					in.ASN = deps.Geo.ASN(ip)
 				}
 			}
 			item, err := deps.Store.EvaluateAttempt(r.Context(), in)
@@ -401,7 +529,7 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 	return r
 }
 
-func adminAuth(token string) func(http.Handler) http.Handler {
+func adminAuth(token, actorSecret string) func(http.Handler) http.Handler {
 	var failures = authFailureStore{items: make(map[string]authFailure)}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -416,7 +544,11 @@ func adminAuth(token string) func(http.Handler) http.Handler {
 				provided = strings.TrimSpace(r.Header.Get("X-API-Token"))
 			}
 
-			if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
+			// Compare fixed-size digests so a malformed token cannot take the
+			// shorter length path in subtle.ConstantTimeCompare.
+			providedDigest := sha256.Sum256([]byte(provided))
+			expectedDigest := sha256.Sum256([]byte(token))
+			if subtle.ConstantTimeCompare(providedDigest[:], expectedDigest[:]) != 1 {
 				remoteIP := requestIP(r)
 				if !failures.allow(remoteIP, time.Now()) {
 					w.Header().Set("Retry-After", "60")
@@ -430,9 +562,43 @@ func adminAuth(token string) func(http.Handler) http.Handler {
 			}
 			failures.reset(requestIP(r))
 
-			next.ServeHTTP(w, r)
+			rawActor := r.Header.Get("X-Admin-Actor")
+			rawActorSignature := r.Header.Get("X-Admin-Actor-Signature")
+			actor := verifiedAdminActor(actorSecret, rawActor, rawActorSignature)
+			if actorSecret != "" && (strings.TrimSpace(rawActor) != "" || strings.TrimSpace(rawActorSignature) != "") && actor == "" {
+				invalidAdminActorSignatures.Add(1)
+				// Do not log the actor or signature: either may be attacker-controlled
+				// and the signature is sensitive authentication material.
+				observability.Warn("admin_actor_signature_invalid", "path", r.URL.Path)
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), adminActorContextKey{}, actor)))
 		})
 	}
+}
+
+func verifiedAdminActor(secret, rawActor, rawSignature string) string {
+	if secret == "" {
+		return ""
+	}
+	actor := strings.TrimSpace(rawActor)
+	if actor == "" || len(actor) > 128 {
+		return ""
+	}
+	for _, char := range actor {
+		if char < 0x20 || char == 0x7f {
+			return ""
+		}
+	}
+	provided, err := hex.DecodeString(strings.TrimSpace(rawSignature))
+	if err != nil || len(provided) != sha256.Size {
+		return ""
+	}
+	digest := hmac.New(sha256.New, []byte(secret))
+	_, _ = digest.Write([]byte(actor))
+	if !hmac.Equal(provided, digest.Sum(nil)) {
+		return ""
+	}
+	return actor
 }
 
 type authFailure struct {
@@ -477,6 +643,57 @@ func requestIP(r *http.Request) string {
 	return remote
 }
 
+func trustedProxyRealIP(cidrs []string) func(http.Handler) http.Handler {
+	trusted := make([]*net.IPNet, 0, len(cidrs))
+	for _, value := range cidrs {
+		_, network, err := net.ParseCIDR(strings.TrimSpace(value))
+		if err == nil {
+			trusted = append(trusted, network)
+		}
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			peer := requestIP(r)
+			peerIP := net.ParseIP(peer)
+			if peerIP == nil || !ipInNetworks(peerIP, trusted) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			forwarded := forwardedClientIP(r)
+			if forwarded != "" {
+				_, port, _ := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+				if port == "" {
+					r.RemoteAddr = forwarded
+				} else {
+					r.RemoteAddr = net.JoinHostPort(forwarded, port)
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func forwardedClientIP(r *http.Request) string {
+	if values := strings.Split(r.Header.Get("X-Forwarded-For"), ","); len(values) > 0 {
+		if ip := net.ParseIP(strings.TrimSpace(values[0])); ip != nil {
+			return ip.String()
+		}
+	}
+	if ip := net.ParseIP(strings.TrimSpace(r.Header.Get("X-Real-IP"))); ip != nil {
+		return ip.String()
+	}
+	return ""
+}
+
+func ipInNetworks(ip net.IP, networks []*net.IPNet) bool {
+	for _, network := range networks {
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -498,7 +715,7 @@ func cors(allowed []string) func(http.Handler) http.Handler {
 			if _, ok := allowedSet[origin]; ok {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Add("Vary", "Origin")
-				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Token")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Token, X-Admin-Actor, X-Admin-Actor-Signature")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 				w.Header().Set("Access-Control-Max-Age", "600")
 			}
@@ -539,7 +756,17 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func decodeJSON(r *http.Request, dst any) error {
 	defer r.Body.Close()
-	dec := json.NewDecoder(r.Body)
+	if r.ContentLength > maxJSONBodyBytes {
+		return fmt.Errorf("request body too large (maximum %d bytes)", maxJSONBodyBytes)
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxJSONBodyBytes+1))
+	if err != nil {
+		return err
+	}
+	if int64(len(body)) > maxJSONBodyBytes {
+		return fmt.Errorf("request body too large (maximum %d bytes)", maxJSONBodyBytes)
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		return err
@@ -577,6 +804,30 @@ func optionalQueryInt(w http.ResponseWriter, r *http.Request, name string) (*int
 	return &id, true
 }
 
+func queryIntList(w http.ResponseWriter, r *http.Request, name string) ([]int, bool) {
+	const maxIDs = 256
+	values := r.URL.Query()[name]
+	if len(values) == 0 {
+		return nil, true
+	}
+	result := make([]int, 0, len(values))
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			if len(result) >= maxIDs {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "too many values for query parameter: " + name})
+				return nil, false
+			}
+			id, err := strconv.Atoi(strings.TrimSpace(part))
+			if err != nil || id <= 0 {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid query parameter: " + name})
+				return nil, false
+			}
+			result = append(result, id)
+		}
+	}
+	return result, true
+}
+
 func queryPage(r *http.Request) (limit, offset int) {
 	limit, offset = 50, 0
 	if value, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit"))); err == nil && value > 0 {
@@ -588,20 +839,24 @@ func queryPage(r *http.Request) (limit, offset int) {
 	if value, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("offset"))); err == nil && value >= 0 {
 		offset = value
 	}
+	if offset > maxAuditOffset {
+		offset = maxAuditOffset
+	}
 	return limit, offset
 }
 
 func promEscape(value string) string {
 	value = strings.ReplaceAll(value, `\`, `\\`)
 	value = strings.ReplaceAll(value, `"`, `\"`)
-	return strings.ReplaceAll(value, "\n", `\n`)
+	value = strings.ReplaceAll(value, "\n", `\n`)
+	return strings.ReplaceAll(value, "\r", `\r`)
 }
 
 func recordAdminAudit(ctx context.Context, st *store.Store, event string, serverID *int, details map[string]any) {
 	if st == nil {
 		return
 	}
-	if err := st.RecordAudit(ctx, "admin-api", serverID, event, details); err != nil {
+	if err := st.RecordAudit(ctx, adminActor(ctx), serverID, event, details); err != nil {
 		observability.Warn("admin_audit_write_failed", "event", event, "error", err)
 	}
 }

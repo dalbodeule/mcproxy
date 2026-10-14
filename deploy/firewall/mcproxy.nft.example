@@ -1,0 +1,22 @@
+# Optional host-level first-line protection for a Linux mcproxy host.
+# Review the interface, rates, and existing firewall policy before loading.
+# This file intentionally does not change the default input policy or manage
+# SSH; it only drops excessive new Minecraft TCP SYNs per source address.
+# Provider L4 protection should remain in front of this host for volumetric
+# attacks and IPv6/anycast deployments.
+
+table inet mcproxy {
+    chain input {
+        type filter hook input priority filter; policy accept;
+
+        # IPv4 clients: tune the rate to the expected peak for this proxy.
+        tcp flags syn tcp dport 25565 meter mcproxy_syn_v4 {
+            ip saddr limit rate over 30/second burst 60 packets
+        } drop
+
+        # IPv6 clients: use a separate meter because address families differ.
+        tcp flags syn tcp dport 25565 meter mcproxy_syn_v6 {
+            ip6 saddr limit rate over 30/second burst 60 packets
+        } drop
+    }
+}

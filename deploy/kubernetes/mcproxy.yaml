@@ -44,6 +44,8 @@ spec:
                 secretKeyRef:
                   name: mcproxy-runtime
                   key: postgres-dsn
+            - name: MCPROXY_REQUIRE_POSTGRES_TLS
+              value: "true"
             - name: MCPROXY_REDIS_ADDR
               value: redis.example.internal:6379
             - name: MCPROXY_REDIS_PASSWORD
@@ -53,11 +55,31 @@ spec:
                   key: redis-password
             - name: MCPROXY_REDIS_TLS
               value: "true"
+            - name: MCPROXY_REQUIRE_REDIS_TLS
+              value: "true"
+            # This production template treats Redis as part of the protection
+            # boundary. Set false only when availability during Redis outages
+            # is the deliberate policy for this cluster.
+            - name: MCPROXY_REDIS_FAIL_CLOSED
+              value: "true"
             - name: MCPROXY_ADMIN_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: mcproxy-runtime
                   key: admin-token
+            - name: MCPROXY_ADMIN_ACTOR_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mcproxy-runtime
+                  key: admin-actor-secret
+                  optional: true
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
           readinessProbe:
             httpGet:
               path: /ready
@@ -80,11 +102,16 @@ spec:
               cpu: "2"
               memory: 1Gi
           securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
       securityContext:
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
       volumes:
@@ -129,6 +156,8 @@ metadata:
     app.kubernetes.io/name: mcproxy
 spec:
   type: LoadBalancer
+  # Preserve the client source address for per-IP policy and rate limiting.
+  externalTrafficPolicy: Local
   selector:
     app.kubernetes.io/name: mcproxy
   ports:

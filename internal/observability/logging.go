@@ -1,16 +1,18 @@
 package observability
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/grafana/loki-client-go/loki"
-	slogloki "github.com/samber/slog-loki/v3"
-	slogmulti "github.com/samber/slog-multi"
 )
 
 var (
@@ -28,20 +30,8 @@ func getLogger(lokiHost string, identify string) (*slog.Logger, error) {
 		), nil
 	}
 
-	config, _ := loki.NewDefaultConfig(lokiHost)
-	config.TenantID = "mcproxy"
-	client, err := loki.New(config)
-	if err != nil {
-		slog.Error("Failed to create Loki client", "error", err)
-		return nil, err
-	}
-
-	logger := slog.New(
-		slogmulti.Fanout(
-			slog.NewTextHandler(os.Stdout, nil),
-			slogloki.Option{Level: slog.LevelDebug, Client: client}.NewLokiHandler(),
-		),
-	)
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	logger = slog.New(&lokiHandler{next: logger.Handler(), endpoint: strings.TrimRight(lokiHost, "/") + "/loki/api/v1/push", client: &http.Client{Timeout: 2 * time.Second}})
 	logger = logger.With(
 		slog.String("app", "mcproxy"),
 		slog.String("identify", identify),
@@ -49,6 +39,95 @@ func getLogger(lokiHost string, identify string) (*slog.Logger, error) {
 	logger.Info("Logging to Loki", "host", lokiHost)
 
 	return logger, nil
+}
+
+type lokiHandler struct {
+	next     slog.Handler
+	endpoint string
+	client   *http.Client
+	attrs    []slog.Attr
+}
+
+type lokiPush struct {
+	Streams []lokiStream `json:"streams"`
+}
+
+type lokiStream struct {
+	Stream map[string]string `json:"stream"`
+	Values [][2]string       `json:"values"`
+}
+
+func (h *lokiHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return level >= slog.LevelDebug || h.next.Enabled(ctx, level)
+}
+
+func (h *lokiHandler) Handle(ctx context.Context, record slog.Record) error {
+	if err := h.next.Handle(ctx, record); err != nil {
+		return err
+	}
+	labels := make(map[string]string, len(h.attrs)+4)
+	for _, attr := range h.attrs {
+		labels[sanitizeLabel(attr.Key)] = attr.Value.String()
+	}
+	record.Attrs(func(attr slog.Attr) bool {
+		labels[sanitizeLabel(attr.Key)] = attr.Value.String()
+		return true
+	})
+	if len(labels) == 0 {
+		labels["app"] = "mcproxy"
+	}
+	payload := lokiPush{Streams: []lokiStream{{
+		Stream: labels,
+		Values: [][2]string{{timeToNanoseconds(record.Time), record.Message}},
+	}}}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Scope-OrgID", "mcproxy")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return nil // Loki is an optional sink; stdout remains authoritative.
+	}
+	_ = resp.Body.Close()
+	return nil
+}
+
+func (h *lokiHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	cloned := *h
+	cloned.attrs = append(append([]slog.Attr{}, h.attrs...), attrs...)
+	cloned.next = h.next.WithAttrs(attrs)
+	return &cloned
+}
+
+func (h *lokiHandler) WithGroup(name string) slog.Handler {
+	cloned := *h
+	cloned.next = h.next.WithGroup(name)
+	return &cloned
+}
+
+func sanitizeLabel(value string) string {
+	var b strings.Builder
+	for i, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9' && i > 0) || r == '_' || r == ':' {
+			b.WriteRune(r)
+		} else if i == 0 {
+			b.WriteString("_")
+		}
+	}
+	if b.Len() == 0 {
+		return "label"
+	}
+	return b.String()
+}
+
+func timeToNanoseconds(value time.Time) string {
+	return strconv.FormatInt(value.UnixNano(), 10)
 }
 
 func Init(lokiHost string, identify string) error {

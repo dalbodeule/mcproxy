@@ -10,7 +10,8 @@
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
-    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+    "check-framework-versions": "node scripts/check-framework-versions.mjs",
+    "check": "npm run check-framework-versions && node scripts/check-i18n.mjs && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

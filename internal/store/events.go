@@ -16,9 +16,11 @@ type auditEvent struct {
 }
 
 type auditWriter struct {
-	store *Store
-	ch    chan auditEvent
-	wg    sync.WaitGroup
+	store   *Store
+	ch      chan auditEvent
+	wg      sync.WaitGroup
+	mu      sync.RWMutex
+	stopped bool
 }
 
 func newAuditWriter(store *Store) *auditWriter {
@@ -34,15 +36,32 @@ func newAuditWriter(store *Store) *auditWriter {
 }
 
 func (w *auditWriter) enqueue(evt auditEvent) {
+	w.mu.RLock()
+	if w.stopped {
+		w.mu.RUnlock()
+		w.store.auditWriteErrors.Add(1)
+		return
+	}
 	select {
 	case w.ch <- evt:
+		w.mu.RUnlock()
+		return
 	default:
-		_ = w.store.writeAudit(context.Background(), evt.actor, evt.serverID, evt.event, evt.details)
 	}
+	w.mu.RUnlock()
+	_ = w.store.writeAudit(context.Background(), evt.actor, evt.serverID, evt.event, evt.details)
 }
 
 func (w *auditWriter) stop() {
+	w.mu.Lock()
+	if w.stopped {
+		w.mu.Unlock()
+		w.wg.Wait()
+		return
+	}
+	w.stopped = true
 	close(w.ch)
+	w.mu.Unlock()
 	w.wg.Wait()
 }
 

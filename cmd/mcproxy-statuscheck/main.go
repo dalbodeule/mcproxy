@@ -5,6 +5,8 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"compress/zlib"
 	"encoding/binary"
 	"encoding/json"
 	"flag"
@@ -24,10 +26,17 @@ type statusResponse struct {
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:25565", "Gate address")
-	protocol := flag.Int("protocol", 760, "Minecraft protocol version")
+	protocol := flag.Int("protocol", 777, "Minecraft protocol version (26.3)")
+	login := flag.Bool("login", false, "perform a login hello smoke test instead of a status request")
 	flag.Parse()
 
-	if err := run(*addr, *protocol); err != nil {
+	var err error
+	if *login {
+		err = runLogin(*addr, *protocol)
+	} else {
+		err = run(*addr, *protocol)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -58,15 +67,8 @@ func run(addr string, protocol int) error {
 	}
 
 	reader := bufio.NewReader(conn)
-	length, err := readVarInt(reader)
+	payload, err := readPacket(reader)
 	if err != nil {
-		return fmt.Errorf("read status packet length: %w", err)
-	}
-	if length <= 0 || length > 1<<20 {
-		return fmt.Errorf("invalid status packet length %d", length)
-	}
-	payload := make([]byte, length)
-	if _, err := io.ReadFull(reader, payload); err != nil {
 		return fmt.Errorf("read status packet: %w", err)
 	}
 	packetID, n, err := parseVarInt(payload)
@@ -92,11 +94,143 @@ func run(addr string, protocol int) error {
 	return nil
 }
 
+func runLogin(addr string, protocol int) error {
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		return fmt.Errorf("connect to Gate: %w", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+
+	handshake := make([]byte, 0, 32)
+	handshake = appendVarInt(handshake, 0)
+	handshake = appendVarInt(handshake, protocol)
+	handshake = appendString(handshake, "localhost")
+	port := make([]byte, 2)
+	binary.BigEndian.PutUint16(port, 25565)
+	handshake = append(handshake, port...)
+	handshake = appendVarInt(handshake, 2) // login next state
+	if err := writePacket(conn, handshake); err != nil {
+		return fmt.Errorf("write login handshake: %w", err)
+	}
+
+	loginStart := make([]byte, 0, 32)
+	loginStart = appendVarInt(loginStart, 0)
+	loginStart = appendString(loginStart, "mcproxy-statuscheck")
+	loginStart = append(loginStart, make([]byte, 16)...)
+	if err := writePacket(conn, loginStart); err != nil {
+		return fmt.Errorf("write login start: %w", err)
+	}
+
+	reader := bufio.NewReader(conn)
+	compressionThreshold := -1
+	for attempt := 0; attempt < 16; attempt++ {
+		raw, err := readPacket(reader)
+		if err != nil {
+			return fmt.Errorf("read login packet: %w", err)
+		}
+		payload := raw
+		if compressionThreshold >= 0 {
+			payload, err = decodeCompressedPacket(raw)
+			if err != nil {
+				return fmt.Errorf("decode compressed login packet: %w", err)
+			}
+		}
+		packetID, prefix, parseErr := parseVarInt(payload)
+		if parseErr != nil {
+			return fmt.Errorf("invalid login packet id: %w", parseErr)
+		}
+		switch packetID {
+		case 2: // Login Success / clientbound hello path
+			ack := appendVarInt(nil, 3) // Login Acknowledged
+			if err := writeCompressedPacket(conn, ack, compressionThreshold); err != nil {
+				return fmt.Errorf("write login acknowledgement: %w", err)
+			}
+			fmt.Printf("Gate login hello OK: protocol=%d\n", protocol)
+			return nil
+		case 3: // Set Compression
+			threshold, _, thresholdErr := parseVarInt(payload[prefix:])
+			if thresholdErr != nil || threshold < 0 {
+				return fmt.Errorf("invalid login compression threshold")
+			}
+			compressionThreshold = threshold
+		case 0:
+			return fmt.Errorf("Gate disconnected before Login Success")
+		default:
+			return fmt.Errorf("unexpected login packet id %d", packetID)
+		}
+	}
+	return fmt.Errorf("Login Success was not received")
+}
+
 func writePacket(w io.Writer, payload []byte) error {
 	frame := appendVarInt(nil, len(payload))
 	frame = append(frame, payload...)
 	_, err := w.Write(frame)
 	return err
+}
+
+func writeCompressedPacket(w io.Writer, payload []byte, threshold int) error {
+	if threshold < 0 {
+		return writePacket(w, payload)
+	}
+	body := appendVarInt(nil, 0)
+	if len(payload) >= threshold {
+		var compressed bytes.Buffer
+		writer := zlib.NewWriter(&compressed)
+		if _, err := writer.Write(payload); err != nil {
+			return err
+		}
+		if err := writer.Close(); err != nil {
+			return err
+		}
+		body = appendVarInt(nil, len(payload))
+		body = append(body, compressed.Bytes()...)
+	} else {
+		body = append(body, payload...)
+	}
+	return writePacket(w, body)
+}
+
+func readPacket(r *bufio.Reader) ([]byte, error) {
+	length, err := readVarInt(r)
+	if err != nil {
+		return nil, err
+	}
+	if length <= 0 || length > 1<<20 {
+		return nil, fmt.Errorf("invalid packet length %d", length)
+	}
+	payload := make([]byte, length)
+	if _, err := io.ReadFull(r, payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+func decodeCompressedPacket(raw []byte) ([]byte, error) {
+	dataLength, prefix, parseErr := parseVarInt(raw)
+	if parseErr != nil || dataLength < 0 {
+		return nil, fmt.Errorf("invalid compressed data length")
+	}
+	if dataLength == 0 {
+		return raw[prefix:], nil
+	}
+	reader, err := zlib.NewReader(bytes.NewReader(raw[prefix:]))
+	if err != nil {
+		return nil, err
+	}
+	payload, readErr := io.ReadAll(reader)
+	closeErr := reader.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if len(payload) != dataLength {
+		return nil, fmt.Errorf("compressed data length mismatch: declared=%d actual=%d", dataLength, len(payload))
+	}
+	return payload, nil
 }
 
 func appendString(dst []byte, value string) []byte {

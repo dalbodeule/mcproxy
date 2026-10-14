@@ -18,29 +18,37 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
-		os.Exit(runHealthcheck())
+		return runHealthcheck()
 	}
 	if len(os.Args) > 1 && os.Args[1] == "migrate" {
-		os.Exit(runMigration())
+		return runMigration()
 	}
 	cfg := config.LoadFromEnv()
+	if err := cfg.Validate(); err != nil {
+		_, _ = os.Stderr.WriteString("invalid configuration: " + err.Error() + "\n")
+		return 1
+	}
 	if err := observability.Init(cfg.LokiHost, cfg.LogIdentify); err != nil {
 		_, _ = os.Stderr.WriteString("failed to initialize logger: " + err.Error() + "\n")
-		os.Exit(1)
+		return 1
 	}
 	observability.Info("mcproxy_starting", "config", cfg.String())
 
 	st, err := store.Open(context.Background(), cfg)
 	if err != nil {
 		observability.Error("store_open_failed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	defer st.Close()
 
 	var geoSvc *geo.Service
-	if cfg.GeoIPPath != "" {
-		g, gerr := geo.Open(cfg.GeoIPPath)
+	if cfg.GeoIPPath != "" || cfg.GeoIPASNPath != "" {
+		g, gerr := geo.OpenWithASN(cfg.GeoIPPath, cfg.GeoIPASNPath)
 		if gerr != nil {
 			observability.Warn("geo_open_failed", "error", gerr)
 		} else {
@@ -89,7 +97,7 @@ func main() {
 	ln, err := net.Listen("tcp", cfg.HTTPAddr)
 	if err != nil {
 		observability.Error("http_listen_failed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	go func() {
@@ -113,10 +121,12 @@ func main() {
 		observability.Info("gate_start_requested", "addr", gateRuntime.Bind())
 	}
 
+	exitCode := 0
 	select {
 	case err := <-errCh:
 		observability.Error("server_runtime_error", "error", err)
-		os.Exit(1)
+		exitCode = 1
+		stop()
 	case <-ctx.Done():
 	}
 
@@ -132,10 +142,15 @@ func main() {
 			observability.Warn("gate_shutdown_timeout")
 		}
 	}
+	return exitCode
 }
 
 func runMigration() int {
 	cfg := config.LoadFromEnv()
+	if err := cfg.Validate(); err != nil {
+		_, _ = os.Stderr.WriteString("invalid configuration: " + err.Error() + "\n")
+		return 1
+	}
 	if err := store.Migrate(context.Background(), cfg); err != nil {
 		_, _ = os.Stderr.WriteString("mcproxy migration failed: " + err.Error() + "\n")
 		return 1

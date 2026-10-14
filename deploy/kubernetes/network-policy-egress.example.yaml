@@ -1,0 +1,87 @@
+# Optional default-deny egress example.
+#
+# Replace every documentation CIDR with the real private address/range of the
+# managed service or Minecraft backend before applying. This file is separate
+# from network-policy.yaml because NetworkPolicy cannot express DNS names and
+# every cluster has different external endpoints.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcproxy-egress
+  namespace: mcproxy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mcproxy
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS. Adjust the namespace/label for the cluster DNS service.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # PostgreSQL managed service (replace documentation CIDR).
+    - to:
+        - ipBlock:
+            cidr: 198.51.100.10/32
+      ports:
+        - port: 5432
+          protocol: TCP
+    # Redis managed service (replace documentation CIDR).
+    - to:
+        - ipBlock:
+            cidr: 198.51.100.11/32
+      ports:
+        - port: 6379
+          protocol: TCP
+    # Minecraft backends (replace with the actual private CIDR).
+    - to:
+        - ipBlock:
+            cidr: 198.51.100.0/24
+      ports:
+        - port: 25565
+          protocol: TCP
+    # Optional GeoIP provider/download endpoint, if used by the deployment.
+    # Add the provider's documented, restricted CIDR and port 443 here. Do
+    # not use 0.0.0.0/0:443; a broad HTTPS egress rule defeats this policy.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcproxy-admin-panel-egress
+  namespace: mcproxy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mcproxy-admin-panel
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mcproxy
+      ports:
+        - port: http
+          protocol: TCP

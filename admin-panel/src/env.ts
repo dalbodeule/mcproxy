@@ -13,6 +13,14 @@ export const variables = defineEnvVars({
 		description: 'Mounted file containing the server-only mcproxy admin token',
 		schema: (value) => value ?? ''
 	},
+	MCPROXY_ADMIN_ACTOR_SECRET: {
+		description: 'Shared server-only secret for signing admin audit actors',
+		schema: (value) => value ?? ''
+	},
+	MCPROXY_ADMIN_ACTOR_SECRET_FILE: {
+		description: 'Mounted file containing the shared admin audit actor secret',
+		schema: (value) => value ?? ''
+	},
 	ADMIN_PANEL_USERNAME: {
 		description: 'Admin panel login username',
 		schema: (value) => value ?? 'admin'
@@ -36,5 +44,9 @@ export const variables = defineEnvVars({
 	ADMIN_PANEL_SESSION_SECRET_FILE: {
 		description: 'Mounted file containing the admin panel session signing secret',
 	schema: (value) => value ?? ''
+	},
+	ADMIN_PANEL_DB_PATH: {
+		description: 'Persistent SQLite path for admin users and invitations',
+		schema: (value) => value ?? 'data/admin-panel.db'
 	}
 });

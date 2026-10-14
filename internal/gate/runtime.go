@@ -21,6 +21,7 @@ import (
 	"go.minekube.com/gate/pkg/edition/java/proxy/phase"
 	"go.minekube.com/gate/pkg/util/favicon"
 	"go.minekube.com/gate/pkg/util/netutil"
+	gateuuid "go.minekube.com/gate/pkg/util/uuid"
 
 	"mcproxy/internal/config"
 	"mcproxy/internal/geo"
@@ -37,12 +38,22 @@ type Runtime struct {
 	geo            *geo.Service
 	tryOrder       []string
 	routes         map[string]routeTarget
+	serverIDs      map[string]int
 	pingMOTD       map[string]string
 	syncEvery      time.Duration
 	pingCacheTTL   time.Duration
 	pingFallback   pingFallback
 	pingCache      map[string]cachedPing
+	loginMu        sync.Mutex
+	pendingLogins  map[gateuuid.UUID]pendingLogin
+	pendingByIP    map[string]int
+	maxLoginsPerIP int
 	ready          atomic.Bool
+}
+
+type pendingLogin struct {
+	ip          string
+	distributed bool
 }
 
 type routeTarget struct {
@@ -313,13 +324,15 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	cfg := gatecfg.DefaultConfig
 	cfg.Bind = opts.Bind
 	cfg.OnlineMode = opts.OnlineMode
+	cfg.ProxyProtocol = opts.Config.GateProxyProtocol
+	cfg.ProxyProtocolBackend = opts.Config.GateProxyProtocolBackend
+	cfg.ProxyProtocolTrustedProxies = append([]string(nil), opts.Config.GateProxyProtocolTrustedProxies...)
 	forwardingMode := strings.ToLower(strings.TrimSpace(opts.Config.GateForwardingMode))
 	if forwardingMode == "" {
 		forwardingMode = string(gatecfg.LegacyForwardingMode)
 	}
 	cfg.Forwarding.Mode = gatecfg.ForwardingMode(forwardingMode)
 	cfg.Forwarding.VelocitySecret = opts.Config.GateVelocitySecret
-	cfg.Forwarding.BungeeGuardSecret = opts.Config.GateBungeeGuardSecret
 	switch cfg.Forwarding.Mode {
 	case gatecfg.NoneForwardingMode, gatecfg.LegacyForwardingMode:
 	case gatecfg.VelocityForwardingMode:
@@ -327,9 +340,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 			return nil, fmt.Errorf("Gate velocity forwarding requires MCPROXY_GATE_VELOCITY_SECRET")
 		}
 	case gatecfg.BungeeGuardForwardingMode:
-		// The token is selected per backend in syncServers. Do not require the
-		// global Gate secret: sharing it across servers defeats the generated
-		// per-server allowed-token and causes BungeeGuard NO_TOKEN failures.
+		return nil, fmt.Errorf("Gate bungeeguard forwarding must be configured per server; use forwarding_mode=bungeeguard on each backend")
 	default:
 		return nil, fmt.Errorf("unsupported Gate forwarding mode %q", forwardingMode)
 	}
@@ -385,13 +396,29 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		syncEvery:      5 * time.Second,
 		tryOrder:       append([]string(nil), cfg.Try...),
 		routes:         make(map[string]routeTarget),
+		serverIDs:      make(map[string]int),
 		pingCacheTTL:   time.Duration(opts.Config.PingCacheTTL) * time.Second,
 		pingFallback:   pingFallback{motd: opts.Config.PingFallbackMotd, offlineMotd: opts.Config.PingOfflineMotd, favicon: opts.Config.PingFallbackFavicon},
 		pingCache:      make(map[string]cachedPing),
 		pingMOTD:       make(map[string]string),
+		pendingLogins:  make(map[gateuuid.UUID]pendingLogin),
+		pendingByIP:    make(map[string]int),
+		maxLoginsPerIP: opts.Config.GateMaxConcurrentLoginsPerIP,
 	}
 	event.Subscribe(p.Event(), 0, func(e *javaproxy.PreLoginEvent) {
 		remoteIP := netIPString(e.Conn().RemoteAddr())
+		playerID, hasPlayerID := e.ID()
+		reserved, reserveErr := r.reserveLoginAttempt(remoteIP, playerID, hasPlayerID)
+		if reserveErr != nil {
+			observability.Error("gate_prelogin_concurrent_limit_failed", "error", reserveErr, "remote_ip", remoteIP, "username", e.Username())
+			e.Deny(&component.Text{Content: "Security protection is temporarily unavailable"})
+			return
+		}
+		if !reserved && r.maxLoginsPerIP > 0 && hasPlayerID {
+			observability.Warn("gate_prelogin_concurrent_limit", "remote_ip", remoteIP, "username", e.Username(), "limit", r.maxLoginsPerIP)
+			e.Deny(&component.Text{Content: "Too many concurrent logins from this address"})
+			return
+		}
 		var serverID *int
 		if target, ok := r.routeTargetForAddr(e.Conn().VirtualHost()); ok {
 			id := target.serverID
@@ -399,11 +426,17 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		}
 		res, err := r.evaluateAttempt(context.Background(), serverID, remoteIP, e.Username(), true)
 		if err != nil {
+			if reserved {
+				r.releaseLogin(playerID)
+			}
 			observability.Error("gate_prelogin_evaluate_failed", "error", err, "remote_ip", remoteIP, "username", e.Username())
 			e.Deny(&component.Text{Content: "Security policy evaluation failed"})
 			return
 		}
 		if !res.Allowed {
+			if reserved {
+				r.releaseLogin(playerID)
+			}
 			observability.Warn("gate_prelogin_denied", "remote_ip", remoteIP, "username", e.Username(), "reason", res.Reason)
 			e.Deny(&component.Text{Content: "Connection denied: " + res.Reason})
 		}
@@ -420,14 +453,20 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		}
 		res, err := r.evaluateAttempt(context.Background(), serverID, remoteIP, e.Player().Username(), false)
 		if err != nil {
+			r.releaseLogin(e.Player().ID())
 			observability.Error("gate_login_evaluate_failed", "error", err, "remote_ip", remoteIP, "username", e.Player().Username())
 			e.Deny(&component.Text{Content: "Security policy evaluation failed"})
 			return
 		}
 		if !res.Allowed {
+			r.releaseLogin(e.Player().ID())
 			observability.Warn("gate_login_denied", "remote_ip", remoteIP, "username", e.Player().Username(), "reason", res.Reason)
 			e.Deny(&component.Text{Content: "Connection denied: " + res.Reason})
 		}
+	})
+	event.Subscribe(p.Event(), 0, func(e *javaproxy.PostLoginEvent) {
+		// Limit authentication/backend setup, not already-connected players.
+		r.releaseLogin(e.Player().ID())
 	})
 
 	// Re-evaluate server-scoped rules when a connected player switches backend
@@ -480,6 +519,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	})
 	event.Subscribe(p.Event(), 0, func(e *javaproxy.DisconnectEvent) {
 		player := e.Player()
+		r.releaseLogin(player.ID())
 		details := map[string]any{"username": player.Username(), "login_status": e.LoginStatus()}
 		var serverID *int
 		if current := player.CurrentServer(); current != nil {
@@ -507,6 +547,68 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	return r, nil
 }
 
+// reserveLogin tracks only modern login attempts that expose a stable UUID.
+// Older clients do not provide one during PreLogin, so the optional limit is
+// intentionally bypassed for them instead of risking another player's slot.
+func (r *Runtime) reserveLogin(ip string, id gateuuid.UUID, hasID bool) bool {
+	if r.maxLoginsPerIP <= 0 || !hasID || id == gateuuid.Nil {
+		return true
+	}
+	r.loginMu.Lock()
+	defer r.loginMu.Unlock()
+	if _, exists := r.pendingLogins[id]; exists {
+		return true
+	}
+	if r.pendingByIP[ip] >= r.maxLoginsPerIP {
+		return false
+	}
+	r.pendingLogins[id] = pendingLogin{ip: ip}
+	r.pendingByIP[ip]++
+	return true
+}
+
+func (r *Runtime) reserveLoginAttempt(ip string, id gateuuid.UUID, hasID bool) (bool, error) {
+	reserved := r.reserveLogin(ip, id, hasID)
+	if !reserved || r.maxLoginsPerIP <= 0 || !hasID || id == gateuuid.Nil || r.store == nil || !r.store.DistributedLoginReservations() {
+		return reserved, nil
+	}
+	allowed, err := r.store.ReserveConcurrentLogin(context.Background(), ip, id.String(), r.maxLoginsPerIP)
+	if err != nil || !allowed {
+		r.releaseLogin(id)
+		return false, err
+	}
+	r.loginMu.Lock()
+	if pending, exists := r.pendingLogins[id]; exists {
+		pending.distributed = true
+		r.pendingLogins[id] = pending
+	}
+	r.loginMu.Unlock()
+	return true, nil
+}
+
+func (r *Runtime) releaseLogin(id gateuuid.UUID) {
+	if id == gateuuid.Nil {
+		return
+	}
+	r.loginMu.Lock()
+	defer r.loginMu.Unlock()
+	pending, exists := r.pendingLogins[id]
+	if !exists {
+		return
+	}
+	delete(r.pendingLogins, id)
+	if count := r.pendingByIP[pending.ip] - 1; count > 0 {
+		r.pendingByIP[pending.ip] = count
+	} else {
+		delete(r.pendingByIP, pending.ip)
+	}
+	if pending.distributed && r.store != nil {
+		if err := r.store.ReleaseConcurrentLogin(context.Background(), pending.ip, id.String()); err != nil {
+			observability.Warn("gate_concurrent_login_release_failed", "error", err, "remote_ip", pending.ip)
+		}
+	}
+}
+
 func componentReasonText(reason component.Component) string {
 	switch value := reason.(type) {
 	case nil:
@@ -528,28 +630,27 @@ func componentReasonText(reason component.Component) string {
 
 func (r *Runtime) evaluateAttempt(ctx context.Context, serverID *int, remoteIP, nickname string, record bool) (*store.EvaluateAttemptResult, error) {
 	country := ""
+	asn := ""
 	if parsed := net.ParseIP(strings.TrimSpace(remoteIP)); parsed != nil && r.geo != nil {
 		country = r.geo.CountryCode(parsed)
+		asn = r.geo.ASN(parsed)
 	}
 	return r.store.EvaluateAttempt(ctx, store.EvaluateAttemptInput{
 		ServerID: serverID,
 		IP:       remoteIP,
 		Nickname: nickname,
 		Country:  country,
+		ASN:      asn,
 		Record:   boolPtr(record),
 	})
 }
 
 func (r *Runtime) serverIDByName(name string) *int {
-	servers, err := r.store.ListServers(context.Background())
-	if err != nil {
-		return nil
-	}
-	for _, server := range servers {
-		if strings.EqualFold(server.Name, name) {
-			id := server.ID
-			return &id
-		}
+	r.mu.RLock()
+	id, ok := r.serverIDs[strings.ToLower(strings.TrimSpace(name))]
+	r.mu.RUnlock()
+	if ok {
+		return &id
 	}
 	return nil
 }
@@ -736,6 +837,7 @@ func (r *Runtime) syncServers(ctx context.Context) error {
 	resolved := make(map[string]*net.TCPAddr, len(servers))
 	tryOrder := make([]string, 0, len(servers))
 	routes := make(map[string]routeTarget, len(servers))
+	serverIDs := make(map[string]int, len(servers))
 	sort.SliceStable(servers, func(i, j int) bool {
 		if servers[i].Priority != servers[j].Priority {
 			return servers[i].Priority < servers[j].Priority
@@ -759,6 +861,7 @@ func (r *Runtime) syncServers(ctx context.Context) error {
 		desiredTokens[strings.ToLower(name)] = s.BungeeGuardAllowedToken
 		desiredModes[strings.ToLower(name)] = r.serverForwardingMode(s)
 		resolved[strings.ToLower(name)] = addr
+		serverIDs[strings.ToLower(name)] = s.ID
 		tryOrder = append(tryOrder, name)
 		target := routeTarget{name: name, serverID: s.ID}
 		for _, key := range routeKeys(s.PublicHost, s.PublicAddr) {
@@ -779,6 +882,7 @@ func (r *Runtime) syncServers(ctx context.Context) error {
 		r.mu.Lock()
 		r.tryOrder = nil
 		r.routes = routes
+		r.serverIDs = serverIDs
 		r.pingCache = make(map[string]cachedPing)
 		r.pingMOTD = make(map[string]string)
 		r.mu.Unlock()
@@ -846,6 +950,7 @@ func (r *Runtime) syncServers(ctx context.Context) error {
 	r.mu.Lock()
 	r.tryOrder = tryOrder
 	r.routes = routes
+	r.serverIDs = serverIDs
 	r.pingMOTD = make(map[string]string, len(servers))
 	for _, s := range servers {
 		if s.Enabled {

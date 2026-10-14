@@ -12,15 +12,15 @@ jobs:
   go:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.27.x'
           cache: true
       - name: Test
-        run: go test ./...
+        run: go test -timeout=5m ./...
       - name: Race test
-        run: go test -race ./...
+        run: go test -race -timeout=5m ./...
       - name: Vet
         run: go vet ./...
       - name: Build
@@ -29,7 +29,8 @@ jobs:
   go-vulnerability-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: golang/govulncheck-action@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1
         with:
           go-version-input: '1.27.x'
           go-package: './...'
@@ -40,13 +41,14 @@ jobs:
       run:
         working-directory: admin-panel
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22.17.x'
           cache: npm
           cache-dependency-path: admin-panel/package-lock.json
       - run: npm ci
+      - run: npm run check-framework-versions
       - run: npm run check
       - run: npm run build
       - run: npm audit --audit-level=high
@@ -54,7 +56,7 @@ jobs:
   compose:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Validate Compose
         env:
           POSTGRES_PASSWORD: ci-validation-only
@@ -64,21 +66,21 @@ jobs:
   compose-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Start and probe Compose stack
         run: make compose-smoke
 
   postgres-restore-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Rehearse PostgreSQL backup and restore
         run: make postgres-restore-smoke
 
   deployment-manifests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Validate deployment YAML
         run: |
           ruby -e 'require "yaml"; ARGV.each { |f| YAML.load_stream(File.read(f)) }' \
@@ -88,40 +90,144 @@ jobs:
             deploy/kubernetes/mcproxy.yaml \
             deploy/kubernetes/admin-panel.yaml \
             deploy/kubernetes/network-policy.yaml \
-            deploy/kubernetes/external-secrets.example.yaml
+            deploy/kubernetes/external-secrets.example.yaml \
+            deploy/kubernetes/network-policy-egress.example.yaml \
+            deploy/kubernetes/ha/mcproxy.yaml
+      - name: Validate deployment scripts
+        run: |
+          for file in deploy/image-scan.sh deploy/supply-chain-check.sh deploy/config-doc-check.sh deploy/config-doc-check-smoke.sh deploy/preflight.sh deploy/preflight-smoke.sh deploy/panel-preflight.sh deploy/panel-preflight-smoke.sh deploy/observability/check-rules.sh deploy/kubernetes/rotate-secrets.sh deploy/kubernetes/production-check.sh deploy/kubernetes/production-check-smoke.sh deploy/kubernetes/rollout-rehearsal.sh deploy/backup.sh deploy/restore.sh deploy/panel-backup.sh deploy/panel-restore.sh deploy/postgres-restore-smoke.sh; do test -x "$file"; done
+          sh -n deploy/image-scan.sh deploy/preflight.sh deploy/preflight-smoke.sh deploy/panel-preflight.sh deploy/panel-preflight-smoke.sh deploy/observability/check-rules.sh deploy/kubernetes/rotate-secrets.sh deploy/kubernetes/production-check.sh deploy/kubernetes/production-check-smoke.sh deploy/kubernetes/rollout-rehearsal.sh
+          bash -n deploy/backup.sh deploy/restore.sh deploy/panel-backup.sh deploy/panel-restore.sh deploy/postgres-restore-smoke.sh
+      - name: Verify supply-chain pinning
+        run: make supply-chain-check
+      - name: Verify configuration documentation
+        run: make config-doc-check
+      - name: Run configuration documentation negative smoke
+        run: make config-doc-check-smoke
+      - name: Verify Prometheus rule inventory
+        run: ./deploy/observability/check-rules.sh deploy/observability/alerts.yml
+      - name: Validate Prometheus rules and config with promtool
+        run: |
+          docker run --rm --entrypoint promtool \
+            -v "$GITHUB_WORKSPACE/deploy/observability:/etc/prometheus:ro" \
+            prom/prometheus:v3.8.0@sha256:d936808bdea528155c0154a922cd42fd75716b8bb7ba302641350f9f3eaeba09 \
+            check rules /etc/prometheus/alerts.yml
+          docker run --rm --entrypoint promtool \
+            -v "$GITHUB_WORKSPACE/deploy/observability:/etc/prometheus:ro" \
+            prom/prometheus:v3.8.0@sha256:d936808bdea528155c0154a922cd42fd75716b8bb7ba302641350f9f3eaeba09 \
+            check config /etc/prometheus/prometheus.yml
+      - name: Run deployment preflight smoke
+        run: make preflight
+      - name: Verify per-server BungeeGuard preflight guard
+        run: make preflight-smoke
+      - name: Verify admin panel deployment preflight
+        run: make panel-preflight-smoke
+      - name: Verify rendered Kubernetes production manifest guard
+        run: make kubernetes-production-check-smoke
 
   container-images:
     runs-on: ubuntu-latest
+    env:
+      MCPROXY_VERSION: ${{ github.ref_name }}
+      MCPROXY_COMMIT: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build mcproxy image
-        run: docker build --pull=false -t mcproxy:ci .
+        run: docker build --pull=false -t mcproxy:ci --build-arg MCPROXY_VERSION="$MCPROXY_VERSION" --build-arg MCPROXY_COMMIT="$MCPROXY_COMMIT" --build-arg MCPROXY_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" .
       - name: Build admin-panel image
         run: docker build --pull=false -t mcproxy-admin-panel:ci admin-panel
+      - name: Verify image runtime hardening
+        run: |
+          test "$(docker image inspect -f '{{.Config.User}}' mcproxy:ci)" = nonroot:nonroot
+          test "$(docker image inspect -f '{{.Config.User}}' mcproxy-admin-panel:ci)" = node
+          docker image inspect -f '{{json .Config.Entrypoint}}' mcproxy:ci | grep -F '"/app/mcproxy-init"'
+          docker image inspect -f '{{json .Config.Healthcheck.Test}}' mcproxy:ci | grep -F 'healthcheck'
+          docker image inspect -f '{{json .Config.Healthcheck.Test}}' mcproxy-admin-panel:ci | grep -F '/health'
       - name: Verify image migration command
         run: docker run --rm -e MCPROXY_DB_DRIVER=sqlite -e MCPROXY_SQLITE_PATH=/data/migration-smoke.db mcproxy:ci migrate
+      - name: Verify image build metadata endpoint
+        run: |
+          set -eu
+          container=mcproxy-metadata-ci
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT INT TERM
+          docker run --rm -d --name "$container" -p 18080:8080 \
+            -e MCPROXY_HTTP_ADDR=0.0.0.0:8080 \
+            -e MCPROXY_GATE_BIND=0.0.0.0:25565 \
+            -e MCPROXY_GATE_ONLINE_MODE=false \
+            -e MCPROXY_ADMIN_TOKEN=ci-metadata-token \
+            -e MCPROXY_DB_DRIVER=sqlite \
+            -e MCPROXY_SQLITE_PATH=/data/mcproxy.db mcproxy:ci >/dev/null
+          for attempt in $(seq 1 20); do
+            if body=$(curl -fsS http://127.0.0.1:18080/metrics 2>/dev/null); then break; fi
+            sleep 1
+          done
+          printf '%s\n' "$body" | grep -F "mcproxy_build_info{version=\"$MCPROXY_VERSION\",commit=\"$MCPROXY_COMMIT\"" >/dev/null
+
+  container-vulnerability-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build mcproxy image
+        env:
+          MCPROXY_VERSION: ${{ github.ref_name }}
+          MCPROXY_COMMIT: ${{ github.sha }}
+        run: docker build --pull=false -t mcproxy:scan --build-arg MCPROXY_VERSION="$MCPROXY_VERSION" --build-arg MCPROXY_COMMIT="$MCPROXY_COMMIT" --build-arg MCPROXY_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" .
+      - name: Build admin-panel image
+        run: docker build --pull=false -t mcproxy-admin-panel:scan admin-panel
+      - name: Scan mcproxy image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: mcproxy:scan
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      - name: Scan admin-panel image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: mcproxy-admin-panel:scan
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
 
   gate-e2e:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.27.x'
           cache: true
       - name: Build mcproxy image
-        run: docker build --pull=false -t mcproxy:e2e .
+        env:
+          MCPROXY_VERSION: ${{ github.ref_name }}
+          MCPROXY_COMMIT: ${{ github.sha }}
+        run: docker build --pull=false -t mcproxy:e2e --build-arg MCPROXY_VERSION="$MCPROXY_VERSION" --build-arg MCPROXY_COMMIT="$MCPROXY_COMMIT" --build-arg MCPROXY_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" .
       - name: Run Minecraft status smoke test
         run: |
+          test "$(docker image inspect -f '{{.Config.User}}' mcproxy:e2e)" = nonroot:nonroot
           docker run --rm -d --name mcproxy-gate-e2e -p 25565:25565 \
             -e MCPROXY_ADMIN_TOKEN=e2e-token mcproxy:e2e
           trap 'docker stop mcproxy-gate-e2e >/dev/null 2>&1 || true' EXIT
           sleep 3
-          go run ./cmd/mcproxy-statuscheck -addr 127.0.0.1:25565
+          go run ./cmd/mcproxy-statuscheck -addr 127.0.0.1:25565 -protocol 777
 
   panel-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Run admin panel container smoke test
         run: make panel-smoke
+      - name: Run admin panel dashboard alert smoke test
+        run: make panel-dashboard-smoke
+      - name: Run admin panel membership smoke test
+        run: make panel-membership-smoke
+      - name: Run admin panel legacy migration smoke test
+        run: make panel-migration-smoke
+      - name: Run admin panel API CSRF smoke test
+        run: make panel-security-smoke
+      - name: Run admin panel backup and restore smoke test
+        run: make panel-backup-smoke

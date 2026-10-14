@@ -26,3 +26,20 @@ func TestBucketCounterDoesNotIncrementWhenRecordingDisabled(t *testing.T) {
 		t.Fatalf("expected next recording bump to be one, got %d", got)
 	}
 }
+
+func TestBucketCounterUsesSlidingWindow(t *testing.T) {
+	c := newBucketCounter()
+	key := "198.51.100.11"
+	if got := c.bump("scope", nil, "ip", key, 2, true); got != 1 {
+		t.Fatalf("first event count = %d, want 1", got)
+	}
+	if got := c.bump("scope", nil, "ip", key, 2, true); got != 2 {
+		t.Fatalf("second event count = %d, want 2", got)
+	}
+	// Advancing the logical slot is enough to verify stale samples are removed;
+	// use the real clock for the boundary behavior and keep the assertion broad.
+	time.Sleep(2100 * time.Millisecond)
+	if got := c.bump("scope", nil, "ip", key, 2, false); got != 0 {
+		t.Fatalf("expired events count = %d, want 0", got)
+	}
+}

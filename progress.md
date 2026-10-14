@@ -18,6 +18,10 @@
   - 저장소/정책 평가 엔진: [internal/store/store.go](internal/store/store.go)
   - GeoLite2 연동: [internal/geo/geo.go](internal/geo/geo.go)
   - 로깅: [internal/observability/logging.go](internal/observability/logging.go)
+- Store 책임 분리
+  - 입력 검증: [internal/store/validation.go](internal/store/validation.go)
+  - 정책·룰·Geo 평가: [internal/store/evaluation.go](internal/store/evaluation.go)
+  - 카운터 엔진과 분산 조정: [internal/store/counter_engine.go](internal/store/counter_engine.go), [internal/store/counter_coordination.go](internal/store/counter_coordination.go)
 
 ## 마일스톤 진행 현황
 
@@ -123,12 +127,15 @@
 - [x] 공식 BungeeGuard 설정 키(`allowed-tokens`)와 reload 절차를 문서·관리패널에 반영
 - [x] 서버별 `forwarding_mode`로 BungeeGuard/legacy/none 전달 방식을 독립 설정하고 Ent migration·API·관리패널에 연결
 - [x] Redis/local control-plane invalidation을 Gate backend 즉시 동기화에 연결하고 5초 polling을 recovery path로 유지
+- [x] Gate 접속 lifecycle 이벤트의 서버 ID 조회를 동기화된 메모리 맵으로 전환해 이벤트별 DB 조회 제거
 - [x] `mcproxy migrate` 명령과 운영 백업→마이그레이션→readiness runbook 추가
 - [x] 배포 이미지 내부 `mcproxy migrate` migration smoke 검증을 CI에 추가
+- [x] 기존 SQLite에서 신규 서버 컬럼 누락을 복구하는 migration 회귀 테스트 추가
 - [x] Kubernetes `/data`를 `emptyDir`에서 PersistentVolumeClaim으로 변경
 - [x] Go 1.27 `encoding/json`와 Minecraft component reason 충돌로 인한 감사 로그 panic 차단
 - [x] Minecraft 26.3(protocol 777) Gate 로그인 hello 회귀 대응 및 재배포 문서화
 - [x] PostgreSQL Compose smoke에서 발견된 pgx/database-sql 드라이버명 불일치 수정
+- [x] Kubernetes rendered manifest server-side dry-run 및 opt-in rollout/readiness rehearsal 스크립트 추가
 
 ### 1) Gate 데이터 플레인 고도화
 - 현재 Gate 연동은 [`PreLoginEvent`](internal/gate/runtime.go:69), [`PingEvent`](internal/gate/runtime.go:87), 초기 서버 선택과 연결 lifecycle 감사 이벤트를 지원한다.
@@ -160,9 +167,9 @@
 - [x] 서버별 `ping_motd`를 저장하고 hostname 기준 Ping 응답에 반영
 
 ### 4) 카운터 정밀도 고도화
-- 현재 [`bucketCounter`](internal/store/counter_engine.go:9)는 버킷 기반 카운터이며 만료 키 정리까지 구현되어 있다.
+- 현재 [`bucketCounter`](internal/store/counter_engine.go:9)는 1초 슬롯 기반 슬라이딩 윈도우이며 만료 키 정리까지 구현되어 있다. Redis 경로도 sorted-set 원자 스크립트로 동일한 최근 N초 의미를 사용한다.
 - 다음 작업:
-  - 더 세밀한 슬라이딩 윈도우 구현
+  - [x] 더 세밀한 슬라이딩 윈도우 구현
   - [x] 키 만료/정리 정책
   - Redis 분산 카운터와 로컬 카운터의 일관성 전략 문서화
 
@@ -174,6 +181,8 @@
   - [x] HTTP API 통합 테스트 추가: [internal/api/router_test.go](internal/api/router_test.go)
   - [x] Gate 최소 통합 테스트 추가: [internal/gate/runtime_test.go](internal/gate/runtime_test.go)
   - [x] Gate Status handshake/Ping 컨테이너 E2E 테스트
+  - [x] Gate v0.74.41 backend transition 종료 교착을 유발하던 synthetic login fixture를 연결 유지형 handshake fixture로 교정하고 10회 반복 검증
+- [x] Make/CI Go 일반·race 테스트에 기본 5분 timeout을 적용해 Gate fixture 교착 시 무기한 실행 방지
   - [x] 테스트 헬퍼/fixture 공통화: [internal/testutil/testenv.go](internal/testutil/testenv.go)
 
 ### 6) 운영형 배포 정리
@@ -191,55 +200,96 @@
 - [x] 민감 설정의 Docker/Kubernetes Secret 파일 주입(`*_FILE`) 지원 추가
 - [x] SvelteKit 관리패널도 API 토큰·로그인·세션 secret의 `*_FILE` 주입 지원
 - [x] Gate 현재 접속자 수와 등록 backend 수를 Prometheus metrics에 추가
+- [x] 정책 snapshot cache hit/miss/age Prometheus metrics와 stale 경보 추가
 - [x] Gate ready 상태에서 backend 0개를 감지하는 Prometheus critical alert 추가
 - [x] 운영 Docker/Compose 기반 이미지를 검증된 digest로 고정해 재현 가능한 배포 구성
 - [x] Kubernetes workload의 불필요한 ServiceAccount 토큰 자동 마운트 차단 및 관리패널 PDB 추가
+- [x] Kubernetes mcproxy 운영 템플릿에서 Redis 보호 경계를 `MCPROXY_REDIS_FAIL_CLOSED=true`로 명시
 - [x] 공급자 중립적인 External Secrets Operator 예시와 SecretStore 교체 절차 문서화
-  - 알림 정책 및 보호 모드 자동 전환 설계
+- [x] 외부 DB/Redis/upstream을 고려한 선택형 Kubernetes egress NetworkPolicy 예시와 DNS 주의사항 문서화
+- [x] 관리패널 한·영·일 locale 기반, 언어 전환 cookie, 로그인/대시보드 핵심 UI 번역 시작
+- [x] 회원제 도입 분석과 초대형 RBAC/조직 격리 단계별 설계 문서화
+- [x] 패널 키보드 focus 표시, skip link, 상태 메시지 aria-live, 로그인 전 언어 전환 보강
+- [x] 관리패널 정책/Geo 초기화, 규칙 삭제, 모바일 토큰 회전에 다국어 확인 단계 추가
+- [x] 회원 관리의 임시 비밀번호 재발급·회원 비활성화에도 다국어 확인 단계 추가
+- [x] 관리패널 대시보드에 Gate 준비 상태·접속자·backend·snapshot cache age 운영 카드 연결
+- [x] 관리패널 locale별 날짜·숫자 포맷과 주요 서버/규칙/확인 UI 라벨 다국어화 보강
+- [x] mcproxy upstream 장애 시 관리패널 dashboard가 500 대신 API unavailable 상태로 graceful degradation
+- [x] 관리패널 서명 세션의 로그인 username을 전역 데이터와 UI에 노출해 향후 RBAC/audit actor 연결 기반 추가
+- [x] 관리패널 proxy 세션 username을 API 감사 actor에 연결하고 직접 토큰 호출의 `admin-api` fallback 유지
+- [x] 관리패널 범용 API proxy와 감사 목록에 회원별 `server_scope` 강제(경로/query/body 검사, scoped 목록 필터, 규칙 mutation 대상 검증)
+- [x] 관리패널 대시보드의 정책·Geo·룰·서버 action 성공/검증 메시지 한·영·일 locale 응답
+- [x] 관리패널 로그인·초대·비밀번호·TOTP MFA action 메시지 한·영·일 locale 응답
+- [x] 관리패널 mcproxy upstream fetch timeout·504 처리와 proxy 장애 Docker smoke 검증
+- [x] 관리패널 `/health`·`/ready` liveness/readiness endpoint와 Docker/Kubernetes probe 분리
+- [x] PostgreSQL/Redis 운영을 전제로 한 다중 Gate HA 매니페스트와 원본 IP 보존 Service 설정
+- [x] Compose smoke가 로컬 `.env`의 전역 BungeeGuard 설정에 오염되지 않도록 테스트 override 고정
+- [x] 운영 Compose 스택의 Redis fail-closed 기본값을 `true`로 고정하고, Redis 장애 중 가용성 우선 시에만 명시적으로 `false`를 사용하도록 문서화
+- [x] Compose readiness smoke가 실행 컨테이너의 `MCPROXY_REDIS_FAIL_CLOSED=true` 환경값까지 직접 검증하도록 보강
+- [x] fail-closed `/ready`가 idle 인스턴스에서도 Redis `PING`을 능동 확인하도록 수정하고 Redis 중단 시 `503` 장애 주입 smoke로 검증
+- [x] fail-closed Redis readiness `PING`에 2초 timeout을 적용해 Redis 장애 시 orchestrator probe가 장시간 대기하지 않도록 보강
+- [x] 관리패널 회원 역할·server scope 수정, 활성화/비활성화, 세션 강제 폐기와 마지막 Owner 보호
+- [x] 관리패널 회원 초대/수정의 `server_scope` 입력을 서버에서 4KiB·256개 ID 이하로 제한하고 저장소 정규화에도 동일 상한 적용
+- [x] 로그인 후 `returnTo`를 내부 경로로만 제한해 오픈 리다이렉트 없이 원래 보호 페이지로 복귀하고 패널 보안 smoke에 검증 추가
+- [x] 일반 서버 API payload의 BungeeGuard 토큰 직접 주입을 거부하고 전용 회전 endpoint만 허용하는 회귀 테스트 추가
+- [x] 유효 접속 시도·허용 시도 Prometheus counter 및 차단 비율 경보/runbook 추가
+- [x] 차단 비율 경보를 프로세스 수명 기준 counter로 교정해 재시작 후 historical DB total 혼합 방지
+- [x] 접속 시도·허용·정책 차단 counter 회귀 테스트 추가
+- [x] 접속 폭주량과 Redis fail-closed 장애를 분리하는 Prometheus 보호 경보 및 운영 runbook 보강
+  - 자동 전역 차단은 오탐·백엔드 장애를 공격으로 오인할 수 있어 운영자 승인 경계로 유지
+- [x] 신뢰된 L4 LB의 PROXY protocol 원본 IP 전달 설정과 trusted CIDR 검증 옵션을 Gate 환경변수로 노출
 
 ### 8) 코드 구조 리팩토링
-- [`internal/store/store.go`](internal/store/store.go)에 책임이 집중되어 있다.
-- 분리 대상:
-  - 정책 저장소
-  - 평가 엔진
-  - 카운터 엔진
-  - 감사 이벤트 writer
-  - 분산 코디네이터
+- `Store` lifecycle과 공통 DTO/DB 초기화는 [`internal/store/store.go`](internal/store/store.go)에 남기고, 주요 책임을 다음 파일로 분리했다.
+  - [x] 입력 검증: [`validation.go`](internal/store/validation.go)
+  - [x] 순수 정책·룰·Geo 평가: [`evaluation.go`](internal/store/evaluation.go)
+  - [x] 평가 orchestration: [`evaluation_service.go`](internal/store/evaluation_service.go)
+  - [x] 정책·Geo 저장소: [`policy_repository.go`](internal/store/policy_repository.go)
+  - [x] 서버·BungeeGuard token lifecycle: [`server_repository.go`](internal/store/server_repository.go)
+  - [x] 규칙 CRUD: [`rule_repository.go`](internal/store/rule_repository.go)
+  - [x] 감사 조회·기록 및 control-plane 무효화: [`audit_repository.go`](internal/store/audit_repository.go), [`audit_coordination.go`](internal/store/audit_coordination.go)
+  - [x] 로컬 카운터·분산 카운터 조정: [`counter_engine.go`](internal/store/counter_engine.go), [`counter_coordination.go`](internal/store/counter_coordination.go)
+  - [x] snapshot cache: [`cache.go`](internal/store/cache.go)
 
 ## 대규모 동시 접속 대응 강화 계획
 - 데이터 플레인 성능 최적화
-  - 정책/룰/Geo 설정을 DB 직접 조회 대신 메모리 캐시로 유지하고, 관리 API 변경 시 무효화 또는 핫 리로드
-  - [`EvaluateAttempt()`](internal/store/store.go:420)의 read path를 lock-free 또는 low-lock 구조로 재설계
-  - 카운터를 슬라이딩 윈도우 버킷/ring buffer 구조로 지속 고도화
+  - [x] 정책/룰/Geo 설정을 DB 직접 조회 대신 메모리 캐시로 유지하고, 관리 API 변경 시 무효화 또는 핫 리로드
+  - [x] 평가 orchestration과 순수 평가 로직을 분리하고 read path의 DB 의존을 snapshot cache로 제한
+  - [x] 카운터를 1초 슬롯 sliding-window/ring 구조로 구현
 - 분산 확장성
-  - Redis 또는 샤딩된 인메모리 카운터로 다중 프록시 인스턴스 간 임계값 공유
-  - Gate 프록시 수평 확장 및 L4 로드밸런서/Anycast 앞단 배치 검토
-  - 서버별 정책/룰 캐시를 pub/sub 기반으로 동기화
+  - [x] Redis 기반 카운터로 다중 프록시 인스턴스 간 임계값 공유
+  - [x] Redis pub/sub 기반 서버 목록·정책 snapshot 무효화 동기화
+  - [x] PostgreSQL/Redis 기반 2-replica Gate HA 매니페스트와 L4 LoadBalancer 원본 IP 보존 경로 추가
+  - [x] Linux 호스트용 선택형 nftables Minecraft SYN rate 예시와 적용 주의사항 추가
+  - [x] nftables 예시를 `make firewall-check`와 배포 구성 검증에 연결
+  - [x] SYN cookie와 용량 의존 conntrack/backlog sysctl 예시 및 적용 주의사항 추가
+  - L4 로드밸런서/Anycast 사업자별 DDoS 보호와 conntrack/SYN-cookie 한도는 배포 환경에서 별도 적용
 - 저장소 및 관리 Plane 분리
-  - SQLite는 개발/소규모용, 대규모 운영은 PostgreSQL 기본
-  - 관리 API와 데이터 플레인 읽기 경로 분리
-  - 감사 로그/차단 이벤트 비동기 큐 처리
+  - [x] SQLite는 개발/소규모용, 대규모 운영은 PostgreSQL 기본 경로로 문서화
+  - [x] 관리 API 저장소 경로와 데이터 플레인 평가 경로 분리
+  - [x] 감사 로그/차단 이벤트 비동기 writer 처리
 - 네트워크/보안 계층 방어
   - SYN flood, connection flood, per-IP conntrack 제한 적용
   - 관리자 API는 별도 네트워크/VPN 뒤로 분리
-  - ASN/Hosting Provider 차단, reputation feed 연동 검토
+  - [x] 선택형 MaxMind GeoLite2-ASN DB와 `asn-allow`/`asn-deny` 관리 룰 지원
+  - ASN reputation feed 자동 연동과 conntrack/SYN-cookie 한도는 배포 환경별 별도 적용
 - 관측성 및 운영 자동화
-  - 활성 연결 수, 서버별 QPS, 정책 캐시 hit ratio, DB latency 메트릭 추가
-  - 경보 기준 정의 및 Adaptive threshold 검토
+  - [x] 활성 연결 수, 서버별 QPS, 정책 캐시 hit ratio, DB latency 메트릭 추가
+- [x] 최근 1시간 baseline 대비 decision block ratio를 비교하는 alert-only adaptive threshold와 runbook 설명 추가
 - 안정성/복원력
-  - fail-open/fail-close 정책 선택
-  - degraded mode 설계
-  - drain/shutdown 전략 정교화
+  - [x] Redis fail-open/fail-closed 정책 선택 및 fail-closed readiness 반영
+  - [x] Redis degraded metrics와 운영 경보/runbook
+  - [x] HTTP/Gate graceful drain 및 idempotent Store shutdown
 
 ## 권장 다음 작업 순서
-1. Prometheus 경보 규칙과 보호 모드 자동 전환 설계
-2. 외부 Secret Manager 및 네트워크 정책 운영 연계
-3. Store 책임 분리 리팩토링
+1. 실제 운영 클러스터에 provider별 External SecretStore와 NetworkPolicy egress를 적용
+2. 배포 환경별 Prometheus 경보 threshold를 정상 peak에 맞춰 튜닝
+3. 필요성이 확인될 때만 allowlisted workflow 기반 보호 정책 자동화 추가
 
 ## 지금 바로 먼저 시작할 작업
-- 1순위: Prometheus 경보와 보호 모드 자동 전환 설계
+- 1순위: 운영 클러스터별 SecretStore·egress 정책 적용과 rollout rehearsal
 - 이유:
-  - 관리 plane과 데이터 plane의 실제 연동을 배포 전 확인해야 한다.
+  - 코드와 provider-neutral 예시는 준비됐지만 실제 SecretStore/CIDR/Prometheus 환경 값은 클러스터마다 달라 배포 전 적용·검증이 필요하다.
 
 ## 단기 마일스톤(제안)
 - M1: ent 스키마(Servers/Policies/Rules/Counters/Audits)와 마이그레이션, /servers 및 /policy API 초안 완료 ✅
@@ -253,15 +303,150 @@
 - M9: Prometheus 메트릭, 경보 규칙, Adaptive threshold 및 보호 모드 자동 전환 구현
 - M10: L4/L7 앞단 연동 전략, ASN/Hosting Provider 차단, 운영용 배포/드레인/복구(runbook 포함) 정리
 
+## 관리 플레인 회원제 1차 완료
+- SvelteKit 3+ / Tailwind 관리 플레인에 한국어·영어·일본어 번역과 locale cookie/Accept-Language 선택을 추가
+- SQLite 기반 회원·초대 저장소 추가: Owner/Admin/Operator/Auditor/Viewer 역할, 서버 범위, 12자 이상 비밀번호, 48시간 초대 만료, 단회 토큰
+- 세션마다 활성 회원을 재확인하고 dashboard 변경 API에 역할별 권한 적용
+- `/members` 및 `/invite` 화면, panel actor와 mcproxy audit actor 연계
+- Kubernetes는 SQLite PVC를 사용하는 단일 replica로 고정하고 `/data` 영속 마운트 추가
+- 세션을 SQLite에 저장하고 로그아웃/비밀번호 변경 시 폐기하며, 본인 비밀번호 변경 화면(`/account`) 추가
+- 초대 단회 사용 race 방지와 password salt 호환 검증, production build 로그인·보호 라우트·logout smoke test 완료
+- TOTP MFA 등록/확인/로그인/해제, Owner/Admin 임시 비밀번호 재설정과 강제 변경 흐름 추가 및 production HTTP smoke test 완료
+- 관리 패널 이미지의 `/data` SQLite volume/권한 기본값 보정, 실제 Docker login/session smoke test 통과
+- 회원 초대→가입→역할·server scope 변경→비활성화→기존 세션 폐기 production smoke와 CI 연결
+- scoped 관리자의 규칙 목록·삭제에서 실제 `rule.server_id` 재검증 및 마지막 Owner 비활성화 SQLite 직렬화 보강
+- 제한된 Admin의 초대·회원 수정·비밀번호 재설정·활성화 변경에 서버 범위 부분집합 검증 추가
+- 관리패널 SQLite(PVC)의 회원·MFA·초대 데이터용 온라인 백업 및 확인 토큰 복구 스크립트 추가
+- 관리패널 로그인 brute-force 방어를 IP와 정규화된 username 단위로 이중화
+- 정책 snapshot 서버별 eager-load와 refresh mutex를 추가해 N+1 조회 및 cache-stampede 완화
+- 관리패널 additive migration에서 중복 컬럼 외 오류를 숨기지 않도록 startup 실패 처리 강화
+- GitHub Actions Go 취약점 스캔 job에 실제 repository checkout 단계 보강
+- 관리패널 CSP(`base-uri`, `object-src`, `frame-ancestors`, `form-action`) 보강
+- 관리패널 API reverse proxy의 역할별 mutation 권한·본문 server scope 검증 및 BungeeGuard 토큰 역할별 비공개 처리
+- Redis 분산 카운터/무효화 오류와 local fallback을 Prometheus 메트릭·운영 경보로 노출하고, Redis 장애 중에도 `/metrics`가 local counter로 계속 응답하도록 보강
+- `MCPROXY_REDIS_FAIL_CLOSED` 선택지를 추가해 보안 우선 환경에서 Redis 카운터 장애 시 접속 평가를 거부할 수 있도록 구성
+- `MCPROXY_REDIS_FAIL_CLOSED` 환경변수 true/false 로딩 회귀 테스트 추가
+- Redis coordination 현재 healthy 상태 gauge와 복구를 반영하는 degraded alert 추가
+- 관리패널 대시보드에 Redis coordination 상태·fallback 횟수·fail-closed 표시 카드 추가
+- `make migration-smoke`, `make validate-deploy`, `npm audit --audit-level=high` 재검증 통과
+- 검증: `npm run check`, `npm run build`, `go test ./...`, `go test -race ./...`, `go vet ./...`, `go run golang.org/x/vuln/cmd/govulncheck@latest ./...` 통과
+- 관리패널 `npm audit --audit-level=high` 직접 실행 결과 취약점 0건
+
 ## 실행/환경 메모
 - 기본 DB: SQLite(파일 경로 data/mcproxy.db). PostgreSQL 사용 시 MCPROXY_DB_DRIVER=postgres 및 MCPROXY_POSTGRES_DSN 설정.
 - 운영 권장 기본값 예시는 [inc.env](inc.env) 기준으로 조정.
 - GeoLite2-City.mmdb 경로 설정: MCPROXY_GEOIP_PATH
 - 관리 API 인증 토큰: MCPROXY_ADMIN_TOKEN (미설정 시 /api/v1 비활성화)
 - 관리 API 인증 실패 제한: 소스 IP별 분당 20회 초과 시 429/Retry-After 응답
+- HTTP 프록시 헤더 신뢰 경계: `MCPROXY_TRUST_PROXY_HEADERS=true`여도 `MCPROXY_TRUSTED_PROXY_CIDRS`와 일치하는 peer에서만 `X-Forwarded-For`/`X-Real-IP`를 사용하며, 그 외 헤더는 무시
+- 관리패널 커스텀 JSON API의 same-origin mutation 검사와 교차 Origin Docker smoke test 추가
+- 회원 초대 수락 시 기존 계정 overwrite 취약점 제거 및 중복 username smoke test 추가
+- Prometheus 차단 사유 label의 CR/LF 및 특수문자 escape 회귀 테스트 추가
+- 관리패널 Node 런타임 이미지를 검증된 digest로 고정해 배포 재현성 강화
+- 관리패널 ko/en/ja 번역 키 누락 수정 및 CI 정적 i18n key 검사 추가
+- i18n 검사 범위를 서버 액션 메시지와 ko/en/ja 사전 parity까지 확장
+- 규칙 reason 입력 길이 제한(512자)과 저장소 회귀 테스트 추가
+- 감사 API의 반복 server_id 필터를 최대 256개로 제한하고 회귀 테스트 추가
+- Store 입력 검증을 `internal/store/validation.go`로 분리해 저장소 책임 분리 1단계 완료
+- 순수 정책·룰·Geo 평가 로직을 `internal/store/evaluation.go`로 분리해 책임 분리 2단계 완료
+- 분산 카운터 조정 정책을 `internal/store/counter_coordination.go`로 분리해 저장소 책임 분리 3단계 완료
+- 감사 기록과 control-plane 무효화 조정을 `internal/store/audit_coordination.go`로 분리해 저장소 책임 분리 4단계 완료
+- 서버 CRUD와 BungeeGuard 토큰 lifecycle을 `internal/store/server_repository.go`로 분리해 저장소 책임 분리 5단계 완료
+- 정책·Geo 저장소 경로를 `internal/store/policy_repository.go`로 분리해 저장소 책임 분리 6단계 완료
+- 규칙 CRUD와 감사 조회를 각각 `internal/store/rule_repository.go`, `internal/store/audit_repository.go`로 분리해 저장소 책임 분리 7단계 완료
+- Store 종료를 idempotent하게 만들고 부분 종료 오류에도 DB/Redis/감사 writer 정리를 계속하는 shutdown 안정성 보강
+- 관리패널 SQLite 복구 후 데이터베이스 권한을 `0600`으로 강제해 회원·세션·MFA 정보의 파일 노출 방지
+- 관리패널 세션 DB에 만료 인덱스와 오래된 만료/폐기 세션 정리 로직을 추가해 장기 운영 시 무제한 증가 방지
+- HTTP/Gate 런타임 오류 시 `os.Exit`로 defer 정리를 건너뛰지 않도록 `run() int` graceful shutdown 경로 보강
+- 직접 의존성 보안·호환성 업그레이드: Chi v5.4.0, pgx v5.11.0, Redis v9.23.0, MaxMindDB v1.13.1; 전체 테스트·race·vet·govulncheck 통과
+- Gate v0.74.40 → v0.74.41 patch upgrade와 관련 geyserlite/genproto 업데이트 적용; protocol 777·BungeeGuard·전체 race/vet/govulncheck 재검증 통과
+- Redis fail-closed 장애 시 `/ready`를 `503 distributed_not_ready`로 전환해 오케스트레이터가 해당 인스턴스를 트래픽에서 제거하도록 보강
+- 데이터 plane 평가 orchestration을 `internal/store/evaluation_service.go`로 분리해 Store 책임 분리 8단계 완료
+- 최초 정책 snapshot 동시 평가의 cache-stampede 회귀 테스트를 추가하고 race 경로 검증
+- 평가 latency·snapshot refresh latency·서버별 평가 counter를 Prometheus low-cardinality metrics로 추가
+- 새 관측성 지표에 서버별 폭주·평가 latency·snapshot refresh latency Prometheus 경보와 runbook 설명 연결
+- `sql.DB.Stats()` 기반 DB pool pressure 지표와 contention 경보 추가
+- 관리패널 runtime 카드에 평균 평가 latency와 DB pool 사용/대기 상태를 한·영·일로 연결
+- control-plane `Store.Stats` DB-backed latency/count Prometheus 지표·경보와 관리패널 DB latency 카드 추가
+- 서버별 평가 metric과 latency counter의 저장소 통합 회귀 테스트 추가
+- 관리패널 catch-all API 프록시를 실제 패널 API allowlist로 제한해 임의 upstream 경로 전달 방지
+- Kubernetes Secret/ExternalSecret 회전 후 대상 workload만 재시작하고 rollout을 확인하는 헬퍼 추가
+- 회원 초대 URL·임시 비밀번호가 포함될 수 있는 관리패널 응답에 `Cache-Control: no-store` 적용 및 smoke 검증
+- 반복 `server_id` query 파라미터를 모두 검증하고 scoped 회원 다중값 우회 회귀 smoke 추가
+- 관리패널 고대비 모드 cookie 토글·서버 렌더링·한영일 라벨과 Tailwind palette 보정 추가
+- 회원 username/password 최대 길이를 저장소 계층에서도 강제하고 oversized 입력 회원 smoke 추가
+- 배포 이미지 두 개를 Trivy/Grype로 HIGH/CRITICAL 검사하는 `make image-scan` helper 추가
+- 운영 배포 전 Secret/DB/Redis 설정과 placeholder·fail-open 위험을 확인하는 `deploy/preflight.sh` 및 `make preflight` 추가
+- 전역 BungeeGuard 설정을 배포 단계에서도 거부하는 `deploy/preflight-smoke.sh` 회귀 검사와 CI 연결
+- 제거된 전역 `MCPROXY_GATE_BUNGEGUARD_SECRET` 잔존 설정도 `preflight.sh`에서 즉시 거부해 서버별 토큰 마이그레이션 누락을 방지
+- 별도 SvelteKit 관리패널의 token/session secret/Origin/영속 DB를 검증하는 `deploy/panel-preflight.sh` 및 smoke/CI 연결
+- Kubernetes runbook에 패널 `*_FILE` preflight와 Secret key 매핑·적용 순서 연결
+- CI deployment job이 HA/egress 매니페스트와 모든 preflight 스크립트를 로컬 `validate-deploy` 범위와 동일하게 검사하도록 보강
+- Prometheus 핵심 recording rule/alert 누락을 감지하는 dependency-free `deploy/observability/check-rules.sh`를 CI와 배포 검증에 연결
+- PostgreSQL/관리패널 백업에 SHA-256 sidecar를 생성하고 복구 전에 자동 검증하도록 보강
+- 관리패널 backup smoke에서 checksum 변조 복구가 거부되는지까지 회귀 검증
+- PostgreSQL restore rehearsal도 dump checksum sidecar 생성·검증을 포함하도록 보강
+- CI와 배포 검증에 Bash 백업·복구 스크립트 syntax 검사를 추가
+- CI와 배포 검증에서 직접 실행되는 모든 운영 스크립트의 executable bit도 확인
+- Kubernetes runbook에 server-side dry-run, secret-file 적용, workload별 rollout/rollback 절차를 추가해 실제 클러스터 적용 순서를 명확화
+- 관리패널 차단 비율을 `attempts - allowed` 추정값 대신 백엔드 `decision_blocks`와 직접 연결해 Prometheus 경보 의미와 일치시킴
+- 전역 `MCPROXY_GATE_FORWARDING_MODE=bungeeguard`를 거부하고 서버별 `forwarding_mode=bungeeguard`만 허용해 토큰 범위 혼동과 `NO_TOKEN` 오설정을 방지
+- 선택형 `MCPROXY_GATE_MAX_CONCURRENT_LOGINS_PER_IP`를 추가해 최신 클라이언트의 IP별 로그인 준비 폭주를 제한하고, 구형 UUID-less 클라이언트는 안전하게 우회
+- Redis 사용 시 동시 로그인 예약을 replica 간 원자적으로 공유하고, Redis 장애 시 fail-closed 정책을 재사용
+- GitHub Actions에 두 배포 이미지를 Trivy HIGH/CRITICAL 기준으로 검사하는 별도 CI job과 배포 스크립트 syntax 검증 추가
+- Trivy GitHub Action을 공식 v0.36.0 release commit SHA로 고정해 CI 공급망 재현성 강화
+- GitHub checkout/setup-go/setup-node/govulncheck Action도 공식 release commit SHA로 고정
+- 관리 API JSON 요청 본문을 1 MiB로 제한하고 oversized payload 회귀 테스트 추가
+- 관리패널 mcproxy reverse proxy에도 streaming 1 MiB 본문 제한과 413 Docker smoke 검증 추가
+- BungeeGuard 실제 로그인 회귀 테스트를 전역 `legacy`와 전역 `bungeeguard` 조합 모두로 확장해 서버별 token handshake를 검증
+- 관리패널에서 BungeeGuard token을 회전한 뒤 Gate control-plane sync가 새 token을 즉시 등록하는 회귀 테스트 추가
+- 관리패널 CI와 `make panel-check`에서 SvelteKit 3+, TailwindCSS 4+의 package.json 선언 및 package-lock 실제 해석 버전을 함께 검증
+- 데이터 Plane/관리 Plane 신뢰 경계, 운영 필수 보안 설정, provider별 남은 한계와 취약점 신고 절차를 `SECURITY.md`로 통합
+- PostgreSQL 운영 preflight에 선택형 `MCPROXY_REQUIRE_POSTGRES_TLS=true`를 추가해 명시적 `sslmode` 없는 DSN과 `disable`을 거부하고 smoke/문서에 연결
+- 외부 Redis 운영 preflight에 선택형 `MCPROXY_REQUIRE_REDIS_TLS=true`를 추가해 인증과 함께 TLS를 명시하도록 smoke/문서에 연결
+- 관리패널 전역·서버별 규칙 및 회원 초대 입력에 명시적 aria-label을 추가해 placeholder 의존 접근성을 보강
+- 로그인 오류를 assertive alert로 노출해 인증 실패 상태가 스크린리더에 즉시 전달되도록 보강
+- 관리패널 security smoke에서 로그인 실패 상태(401)를 회귀 검증하고, 접근성 alert markup은 Svelte compile 검사로 보장
+- 관리패널 preflight에서 SQLite 파일·WAL 디렉터리 쓰기 가능 여부를 probe하고 panel-preflight smoke를 임시 경로 기준으로 보강
+- 패널 로그인·회원·legacy migration·보안·백업 smoke를 한 번에 실행하는 `make panel-rehearsal` 운영 rehearsal 타깃 추가
+- 렌더링된 Kubernetes manifest의 placeholder·digest pin·fail-closed·pod 보안 설정을 확인하는 `production-check.sh`와 운영 runbook 연결
+- Kubernetes production manifest guard의 placeholder 거부 및 rendered-value positive smoke를 CI에 연결
+- Kubernetes 기본/HA 매니페스트에 PostgreSQL·Redis TLS 강제 플래그를 명시하고 production guard가 TLS 요구 설정 누락을 거부하도록 보강
+- Kubernetes Minecraft LoadBalancer에 `externalTrafficPolicy: Local`을 강제해 source IP 기반 정책·로그인 제한이 node IP로 축약되지 않도록 보강
+- PostgreSQL·관리패널 백업 checksum sidecar도 임시 파일에서 원자적으로 교체해 중단 중 부분 checksum이 복구 검증을 오염시키지 않도록 보강
+- Kubernetes 기본/HA mcproxy와 관리패널에 startup probe를 추가해 느린 migration·Gate 초기화가 liveness 재시작으로 오인되지 않도록 보강
+- Kubernetes production guard가 workload image 누락/빈 매니페스트를 통과하지 않도록 image 수와 digest 검증을 보강하고 negative smoke 추가
+- Kubernetes production guard가 다른 이미지 중복으로 mcproxy workload가 대체되는 경우도 거부하도록 mcproxy/admin-panel image 이름을 각각 검증
+- Kubernetes image repository 검증을 basename 정확 매칭으로 수정해 `other-mcproxy` 같은 유사 이름 우회를 거부하고 회귀 smoke 추가
+- 관리패널 Kubernetes Deployment에도 30초 termination grace period를 명시해 SQLite 세션 저장소의 graceful shutdown 동작을 mcproxy와 일치시킴
+- 알 수 없는 `MCPROXY_DB_DRIVER`가 SQLite로 조용히 fallback하지 않고 명시적으로 Store migration/startup 실패를 내도록 수정하고 대소문자·공백 정규화 회귀 테스트 추가
+- deployment preflight도 DB driver를 런타임과 동일하게 정규화해 ` POSTGRES ` 설정의 사전 검증·실행 동작을 일치시킴
+- 런타임 설정 검증이 malformed 보안 boolean과 로그인 동시 제한값을 fail-open/default fallback하지 않고 기동·migration을 거부하도록 보강
+- mcproxy·관리패널 deployment preflight도 malformed TLS/fail-closed/HTTPS boolean을 false로 오인하지 않고 즉시 거부하도록 강화
+- preflight boolean의 `1/yes/on`과 대소문자 표기도 허용만 하고 무시하지 않도록 실제 TLS·HTTPS 강제 동작으로 정규화하고 회귀 smoke를 추가
+- 감사 로그 페이지 offset을 API·저장소 양쪽에서 1,000,000으로 제한해 악의적인 대형 OFFSET으로 인한 불필요한 DB 비용을 완화하고 회귀 테스트 추가
+- Gate client-side PROXY protocol 활성화 시 trusted proxy 네트워크를 반드시 명시하고 IP/CIDR 형식을 런타임·배포 preflight에서 검증해 임의 client IP spoofing 설정을 방지
+- 관리패널 MFA 활성화·비활성화 후 기존 세션을 모두 폐기하고 현재 세션만 재발급해 탈취된 이전 세션의 지속 사용을 차단
+- 관리패널 owner/admin이 MFA 기기를 잃은 회원의 MFA를 초기화하고 해당 회원 세션을 폐기할 수 있는 복구 액션·감사 이벤트·한영일 UI를 추가
+- 서버 생성·수정 감사 이벤트에 server_id 관계를 기록해 scoped 관리자 감사 조회에서 변경 이력이 누락되지 않도록 수정하고, 삭제 이벤트는 dangling 외래키를 피하도록 details에 ID를 보존
+- PostgreSQL restore smoke에도 legacy servers 컬럼 제거 후 `mcproxy migrate`로 복구하는 additive upgrade 검증을 추가해 SQLite와 PostgreSQL 마이그레이션 경로를 함께 회귀 검증
+- HA PostgreSQL replica가 동시에 Ent schema creation을 수행해도 충돌하지 않도록 session-scoped advisory lock을 추가하고 concurrent migration smoke로 검증
+- Docker 이미지 CI/Make smoke에서 관리패널 non-root user, mcproxy init entrypoint, 양쪽 healthcheck 유지 여부를 직접 검증
+- 이미지 하드닝 smoke 실행 순서를 운영 README·배포 runbook에 연결해 publish 전 검증 절차를 문서화
+- 전역 BungeeGuard secret이 “무시”가 아니라 deployment preflight에서 “거부”된다는 동작을 한·영 문서와 API 목록에 일치시킴
+- 관리패널 BungeeGuard 토큰을 기본 접힘(details)으로 표시해 권한 있는 운영자의 평문 토큰 노출을 줄이고 ko/en/ja 라벨을 추가
+- 관리패널 SQLite 회원 스키마에 버전 메타데이터와 트랜잭션 기반 additive migration 경로를 추가해 이미지 업그레이드 시 상태를 추적
+- 기존 `must_change_password` 컬럼이 없는 패널 SQLite를 컨테이너에서 실제 업그레이드하는 legacy migration smoke와 CI 검증 추가
+- Gate status smoke 기본 protocol을 26.3/777로 고정해 CI가 실제 최신 클라이언트 handshake를 검증하도록 보강
+- Docker/CI Gate E2E는 백엔드 없는 기본 이미지에서 정상적인 status smoke만 수행하도록 조정했고, protocol 777 login hello는 백엔드 fixture를 사용하는 Gate 통합 테스트에서 검증
+- Gate hostname routing/login 및 BungeeGuard 통합 fixture도 protocol 777을 사용하도록 맞춰 clientbound hello 회귀 범위를 확장
+- protocol 777 통합 fixture에서 Set Compression과 Login Acknowledged framing까지 처리해 실제 PostLogin/backend 전환을 검증
+- 26.3 Login Start UUID layout을 vanilla 형식으로 교정해 malformed login fixture가 false negative를 만들지 않도록 수정
 - Redis 분산 동기화(선택): MCPROXY_REDIS_ADDR, MCPROXY_REDIS_CHANNEL
 - Redis 인증/TLS: MCPROXY_REDIS_PASSWORD, MCPROXY_REDIS_TLS 및 Compose 인증 healthcheck
 - Loki 로깅(선택): MCPROXY_LOKI_HOST, MCPROXY_LOG_IDENTIFY
+- 보안 의존성 점검: 사용 중인 Go/npm 의존성에 대해 최신 `govulncheck`와 `npm audit --audit-level=high` 재검사 결과 취약점 없음
+- Gate 통합 테스트: Gate v0.74.41 shutdown 교착 회피 정리 및 race 빌드 upstream 경로 분리
 - Minekube Gate 바인드 및 온라인 모드: MCPROXY_GATE_BIND, MCPROXY_GATE_ONLINE_MODE
 - HTTP API 바인드: MCPROXY_HTTP_ADDR(기본 127.0.0.1:8080)
 - 빌드/실행: `make build`, `make run` (사전 `make tools`로 ent 코드젠 설치 권장)
@@ -281,6 +466,12 @@
 - [internal/store/store.go](internal/store/store.go)
 - [internal/store/cache.go](internal/store/cache.go)
 - [internal/store/counter_engine.go](internal/store/counter_engine.go)
+- [internal/store/counter_coordination.go](internal/store/counter_coordination.go)
+- [internal/store/audit_coordination.go](internal/store/audit_coordination.go)
+- [internal/store/server_repository.go](internal/store/server_repository.go)
+- [internal/store/policy_repository.go](internal/store/policy_repository.go)
+- [internal/store/rule_repository.go](internal/store/rule_repository.go)
+- [internal/store/audit_repository.go](internal/store/audit_repository.go)
 - [internal/store/distributed.go](internal/store/distributed.go)
 - [internal/store/events.go](internal/store/events.go)
 - [internal/geo/geo.go](internal/geo/geo.go)
@@ -290,3 +481,140 @@
 - [internal/ent/schema/rule.go](internal/ent/schema/rule.go)
 - [internal/ent/schema/counter.go](internal/ent/schema/counter.go)
 - [internal/ent/schema/audit.go](internal/ent/schema/audit.go)
+- 관리패널 scoped admin의 허용된 서버 rule 삭제가 경로의 `server_id` query 부재를 전역 작업으로 오인해 거부되던 scope 판정을 수정하고 패널 check/build로 회귀 검증
+- 패널의 `X-Admin-Actor` 감사 식별자에 선택적 공유 HMAC secret을 도입해 unsigned/invalid actor 위조를 `admin-api`로 격리하고 Go·SvelteKit·Kubernetes 설정/문서에 연결
+- 대시보드 서버 action의 직접 mcproxy 호출에도 동일한 HMAC actor 서명을 연결해 JSON proxy와 form mutation의 감사 주체가 일치하도록 보강
+- actor 서명 secret이 설정된 경우 32자 미만/placeholder를 런타임·양쪽 deployment preflight에서 거부하고 valid/short secret smoke를 추가
+- 패널 preflight smoke를 독립 스크립트로 분리해 HTTPS·malformed boolean·readonly DB·actor secret 길이 검사를 CI/릴리스 게이트에서 자동 실행
+- Kubernetes External Secrets 예시에도 동일 actor secret을 양쪽 Secret에 선택적으로 매핑하는 절차를 명시해 Secret Manager 배포 경로의 silent actor 비활성화를 방지
+- 로컬 DB·PostgreSQL dump·SQL export·checksum·백업 디렉터리를 `.gitignore`와 `.dockerignore`에서 차단해 운영 백업이 커밋이나 이미지 build context로 유입되지 않도록 보강
+- actor secret이 활성화된 상태에서 서명 실패가 발생하면 민감한 헤더 값을 기록하지 않고 `admin_actor_signature_invalid` 경고를 남기도록 관측성 보강
+- actor 서명 실패를 low-cardinality `mcproxy_admin_actor_signature_invalid_total` Prometheus counter와 `McproxyInvalidAdminActorSignature` alert로 노출하고 rule inventory 검증에 연결
+- 인증된 요청에 잘못된 actor 서명을 넣었을 때 요청은 정상 처리하되 counter가 정확히 증가하는 API 통합 회귀 테스트 추가
+- 로컬 Go 빌드 산출물 `bin/`을 Git ignore에 추가해 생성 바이너리가 커밋·검토 대상에 섞이지 않도록 정리
+- 실제 권한의 Gate 통합 테스트에서 hostname backend routing과 서버별 BungeeGuard forwarding을 각각 검증하고, Gate shutdown이 13~116ms 내 완료되어 기존 10분 timeout 경로가 재현되지 않음을 확인
+- 관리자 API Bearer token 인증을 고정 길이 SHA-256 digest 비교로 바꿔 길이가 다른 잘못된 토큰의 조기 반환 타이밍 차이를 완화하고 API 테스트로 검증
+- Go govulncheck와 관리패널 high severity npm audit를 재현 가능한 `make security-audit` 게이트로 통합하고 한·영 운영 문서에 추가
+- `make release-check`에 `security-audit`를 연결해 릴리스 검증에서 취약점 검사를 생략할 수 없도록 보강
+- 직접 의존성 최신성 점검 결과 Gate/Chi/pgx/Redis/MaxMindDB는 최신이었고, `modernc.org/sqlite`를 v1.49.1에서 v1.60.1로 업그레이드한 뒤 전체 테스트·race·govulncheck·npm audit를 통과
+- SQLite migration smoke와 PostgreSQL backup/restore smoke를 업그레이드된 드라이버로 재실행해 컨테이너 데이터 경로까지 통과
+- PostgreSQL+Redis Compose smoke를 재실행해 readiness와 Redis 중단 시 fail-closed `503` 동작을 확인
+- SQLite 업그레이드 후 mcproxy·관리패널 이미지를 재빌드하고 non-root, privilege-drop entrypoint, 양쪽 healthcheck hardening smoke를 통과
+- `/metrics`에 low-cardinality `mcproxy_build_info`를 추가하고 Make/Docker release metadata 주입 경로와 기본 dev 값을 연결해 운영 중인 이미지 식별성을 보강
+- 실제 release 값으로 Docker 이미지를 빌드해 `/metrics`에서 version/commit/build_time이 일치하는지 컨테이너 smoke로 확인
+- 관리패널이 `mcproxy_build_info`의 version/commit을 서버 측에서 읽어 대시보드에 표시하도록 연결하고 ko/en/ja i18n·check·build를 통과
+- 버전 표시 변경 후 실제 관리패널 production image에서 login/session, membership, legacy migration, CSRF/upstream allowlist, backup/restore rehearsal을 모두 통과
+- build metadata API 및 대시보드 표시 변경 후 전체 `make release-check`를 재실행해 Go/race/panel/security/deployment/preflight 전부 통과
+- CI의 container image·vulnerability scan·Gate E2E 빌드에도 Git ref/SHA와 UTC build time을 Docker build arg로 주입해 배포 이미지의 metadata 추적성을 유지
+- CI container-images job에서 실제 mcproxy 컨테이너 `/metrics`를 조회해 주입된 version/commit metadata까지 검증하도록 보강
+- Make의 로컬 build·migration smoke·image targets가 Git tag/description·commit·UTC build time을 자동 주입하고 명시적 override도 지원하도록 정리
+- `make validate-deploy`가 배포 매니페스트뿐 아니라 `.github/workflows/ci.yml` YAML 문법도 함께 검증하도록 보강하고 로컬 검증 통과
+- 최신 작업 트리에서 `make release-check`를 재실행해 Go test/race/vet, SvelteKit check/build, govulncheck, npm audit, 배포·CI YAML, preflight, Kubernetes production guard까지 모두 통과
+- 실제 Docker 이미지로 Gate protocol 777 status smoke를 재실행해 `Gate status OK`를 확인하고, PostgreSQL·Redis Compose 환경에서 Redis 중단 시 fail-closed readiness `503` 전환을 재검증
+- 한국어 API 운영 문서의 오래된 `/rules/ip-*`, `/rules/name-*`, `/rules/geo` 경로를 실제 라우터 계약인 일반 `/rules` 및 `/policy/geo`로 수정하고 `evaluate`·필드·scope 사용법을 명시
+- 룰 삭제 전에 실제 서버 소속을 보존해 `rule.delete` 감사 이벤트가 서버별 `server_id` 필터에 계속 나타나도록 수정하고, 비동기 감사 writer를 고려한 API 회귀·race 테스트 통과
+- 영문 운영 문서의 서버 수정 method 표기를 실제 API 계약인 `PUT /api/v1/servers/{id}`로 교정하고, 최신 전체 Go 테스트를 실제 localhost bind 권한으로 통과
+- 룰 삭제 시 서버 소속 조회와 실제 삭제를 Ent transaction으로 원자화해 감사 scope 불일치 경쟁 조건을 제거하고, 전체 Go 테스트까지 재통과
+- 감사 persistence 실패를 low-cardinality `mcproxy_audit_write_errors_total`로 노출하고 `McproxyAuditWriteFailed` critical alert·rule inventory·운영 문서에 연결
+- 초기화되지 않은 Store의 감사 저장 panic/error도 metric에 누적되는 회귀 테스트를 추가하고 API·Store race 검증 통과
+- Go module proxy 기준 핵심 직접 런타임 의존성(Gate, Chi, pgx, Redis, MaxMindDB, SQLite)의 업데이트 후보가 없음을 재확인했으며, 간접 의존성은 호환성 검증 없는 일괄 업그레이드를 보류
+- 감사 persistence metric/alert 변경 후 최신 작업 트리에서 `make release-check`를 재실행해 Go test/race/vet, 패널 check/build, govulncheck, npm audit, 배포 YAML, preflight, Kubernetes guard까지 최종 통과
+- Store 종료 중 감사 이벤트 enqueue와 audit writer channel close가 경쟁해 panic할 수 있는 경로를 mutex/상태 가드로 보강하고, 중복 stop·종료 후 enqueue 테스트 및 전체 Go/배포 검증 통과
+- 관리패널 `/ready`가 세션 테이블만 확인하던 문제를 수정해 membership schema version과 `panel_users` 저장소도 함께 검사하고, Svelte check/build 및 실제 Docker panel smoke 통과
+- readiness 보강 후 최신 `make release-check`를 재실행해 Go/race/vet, 패널 build, govulncheck, npm audit, deployment/preflight/Kubernetes 검증까지 모두 통과
+- 관리패널·배포 README에 `/ready`가 session tables와 membership schema/store까지 검증한다는 probe 계약을 명시
+- scoped 관리자가 `GET /api/v1/audits`에서 `server_id` query를 생략해도 다른 서버 감사로그를 볼 수 없도록 panel API proxy의 목록 필터를 보강하고 운영 문서에 명시
+- 감사 로그 scope filtering 변경 후 Docker `make panel-rehearsal`과 최신 `make release-check`를 재실행해 패널 런타임, Go test/race/vet, govulncheck, npm audit, 배포·preflight·Kubernetes 검증까지 현재 작업 트리 기준으로 통과
+- 패널 membership smoke에 로컬 fake mcproxy upstream을 추가해 범위 없는 `GET /api/v1/audits`도 scoped admin에게 허용 서버의 이벤트만 반환하는 실제 응답 회귀 검증을 연결
+- 실제 Go 라우터 계약과 요청 제한·인증·BungeeGuard 회전 절차를 한 문서로 정리한 `docs/api-reference.md`를 추가하고 영문·한국어 README에서 연결
+- 계정 MFA, 서버 생성, 감사 필터 입력에 다국어 aria-label을 보강해 placeholder 의존 접근성 공백을 줄이고 Svelte check/build 통과
+- 접근성 라벨 변경 후 Docker `make panel-rehearsal`을 재실행해 로그인·회원 범위·legacy migration·보안·백업/복구 smoke까지 통과
+- 한국어 HTTP API 요약에 `/ready`의 503 readiness 계약과 `/metrics`의 내부 네트워크 전용 운영 원칙을 명시해 상세 API 레퍼런스와 문서 의미를 일치시킴
+- 최신 UI 접근성·한국어 운영 문서 변경 후 `make release-check`를 재실행해 Go test/race/vet, SvelteKit check/build, govulncheck, npm audit, 배포 preflight와 Kubernetes guard까지 모두 통과
+- scoped admin의 감사 조회가 허용 범위 밖 첫 페이지 때문에 빈 결과가 되지 않도록 panel proxy가 범위 없는 요청에 허용 `server_id`들을 upstream query로 전달하고 응답 후 필터를 유지
+- scoped 감사 upstream query 변경 후 Svelte check/build와 fake upstream 기반 `make panel-membership-smoke` 통과
+- scoped 감사 query 보강 후 최신 `make release-check`를 재실행해 Go/race/vet, SvelteKit, govulncheck, npm audit, 배포 preflight와 Kubernetes guard까지 통과
+- membership smoke가 fake upstream 요청 query도 검사해 scoped audit 요청에 허용된 `server_id`만 전달되는지 직접 검증하도록 보강
+- 감사 API가 look-ahead 조회 기반 `has_more`를 명시하고 패널이 정확한 페이지 상태를 사용하도록 보강해 정확히 limit개인 마지막 페이지의 잘못된 다음 링크를 제거
+- API 회귀 테스트에서 감사 응답의 `has_more` 필드 존재를 직접 검증하도록 추가
+- 감사 pagination metadata 변경 후 Go API/store 테스트, Svelte check/build, 최신 `make release-check`까지 통과
+- `has_more` 응답 계약 변경 후 Docker `make panel-rehearsal`까지 재실행해 패널 이미지 런타임·회원·마이그레이션·보안·백업/복구 smoke 통과
+- 감사 3건을 실제 비동기 writer로 시드한 API 회귀 테스트를 추가해 `limit=2` 응답이 정확히 2건으로 잘리고 `has_more=true`를 반환하는지 검증
+- 회원 관리 화면의 기존 회원 역할 변경 select에도 사용자별 다국어 `aria-label`을 추가해 초대·수정 폼의 접근성 라벨을 일관화하고 Svelte check/build 통과
+- 패널 API의 상태 변경 요청에서 `Origin` 누락도 403으로 거부하도록 CSRF 경계를 강화하고, 보안 문서·smoke에 cross-origin 및 origin-less 요청 검증을 추가해 실제 Docker 테스트 통과
+- CSRF Origin 강화 후 Docker `make panel-rehearsal`로 로그인·회원·legacy migration·보안·백업/복구 전체 패널 흐름을 재검증해 통과
+- 최신 CSRF 변경을 포함한 작업 트리에서 `make release-check`를 재실행해 Go test/race/vet, SvelteKit check/build, govulncheck, npm audit, preflight와 Kubernetes guard까지 모두 통과
+- 현재 이미지로 `make gate-e2e`를 재실행해 실제 Docker Gate가 protocol 777 상태 요청에 정상 응답하는 것을 확인
+- 제공된 Gate hostname 로그인 timeout 경로를 실제 권한으로 재현 점검해 `TestGateLoginRoutesHostnameToSelectedBackend`가 0.13초에 정상 종료하고, 서버별 BungeeGuard 토큰 통합 테스트도 0.02초에 통과함을 확인; 샌드박스 bind 거부와 제품 코드 timeout을 구분
+- 로그인·초대·계정·회원 관리의 오류/성공 메시지에 assertive/polite `aria-live`를 보강해 비시각적 사용자에게 상태 변경을 전달하도록 하고 Svelte check 통과
+- 대시보드의 mcproxy upstream 장애 배너와 서버 작업 오류에도 `aria-live`를 추가해 장애·작업 실패가 스크린리더에 전달되도록 보강하고 Svelte check/build 통과
+- 서버별 정책 편집의 IP/닉네임 burst 입력 4개에 서버명·정책명을 포함한 다국어 `aria-label`을 추가해 placeholder 의존을 제거하고 Svelte check 통과
+- 감사 로그 필터에 실제 운영 이벤트인 `rule.delete`, `server.update`, `server.delete`, `server.bungeeguard_token.rotate`를 추가해 삭제·토큰 회전 이력을 UI에서 직접 조회할 수 있도록 보강하고 Svelte check 통과
+- 감사 필터의 서버 수정/삭제·토큰 회전·규칙 삭제 라벨을 한·영·일로 분리해 이벤트 의미를 명확히 표시하도록 보강하고 i18n 245-key parity 및 production build 통과
+- API 레퍼런스에 감사 `event` 필터의 실제 지원 값 전체를 명시해 운영 문서·관리패널 필터·라우터 계약을 일치시키고 diff 형식 검증 통과
+- 감사 목록 본문도 내부 event key 대신 한·영·일 localized label을 표시하고 미지원 미래 이벤트는 raw key로 안전하게 fallback하도록 개선, Svelte check/build 통과
+- 현재 Go module proxy 기준 핵심 직접 의존성(Gate 0.74.41, Chi 5.4.0, pgx 5.11.0, Redis 9.23.0, MaxMindDB 1.13.1, SQLite 1.60.1, Ent 0.14.6, Prometheus client 1.25.0)에 추가 업데이트 후보가 없음을 재확인
+- Go 1.27 `component.Text.MarshalJSON` panic 회귀를 실제 Ent/SQLite 감사 저장 경로로 검증하는 `TestAuditWriteSanitizesMinecraftComponentBeforeEntJSON`를 추가하고 Store 테스트 통과
+- 감사 JSON 저장 회귀 테스트 추가 후 Go 전체 테스트와 race 테스트를 현재 작업 트리에서 재실행해 모두 통과
+- 직접 사용하는 GeoIP(`geoip2-golang v1.13.0`/`maxminddb v1.13.1`)와 Prometheus client `v1.25.0`까지 최신 후보를 별도로 재확인했으며 추가 업데이트 없음
+- 현재 작업 트리로 PostgreSQL·Redis Compose smoke를 재실행해 정상 readiness와 Redis 중단 시 fail-closed `503` 전환을 실제 컨테이너에서 확인
+- 실제 API가 기록하는 `geo.update` 감사 이벤트를 패널 필터·목록 localized label·API 레퍼런스에 추가하고 한·영·일 i18n 246-key parity 및 production build 통과
+- `geo.update` 감사 UI 변경을 포함한 최신 작업 트리에서 `make release-check`를 재실행해 Go/race/vet, 패널 check/build, govulncheck, npm audit, 배포 preflight와 Kubernetes guard까지 모두 통과
+- Prometheus 관측성에 DB pool 포화(in-use가 open과 같고 대기 요청 발생)를 감지하는 `McproxyDatabasePoolExhausted` critical alert와 대응 문서를 추가하고 rule inventory·배포 검증 통과
+- `make validate-deploy`가 `promtool` 설치 환경에서는 rules/config 의미 검사를 실행하고, 미설치 환경에서는 production rollout 전 별도 검사가 필요하다는 명시적 skip 경고를 출력하도록 보강
+- Prometheus 공식 `v3.8.0` 컨테이너의 `promtool`로 실제 `alerts.yml` 21개 rule과 `prometheus.yml` config semantic validation을 실행해 모두 성공
+- CI deployment-manifests job에도 동일한 digest-pinned Prometheus `v3.8.0` promtool rules/config 검사를 추가하고 GitHub Actions YAML·diff 검증 통과
+- CI promtool 단계 추가 후 최신 작업 트리에서 `make release-check`를 재실행해 Go/race/vet, 패널 build, govulncheck, npm audit, deployment/preflight/Kubernetes 검증까지 통과
+- 개발자용 `make promtool-check` target을 추가해 CI와 동일한 digest-pinned Prometheus rules/config 검사를 로컬에서 재현 가능하게 하고 실제 실행에서 21 rules/config 검증 성공
+- mcproxy 런타임 Docker 이미지에도 `USER nonroot:nonroot`를 명시해 distroless 기본 사용자에 의존하지 않도록 보강하고 배포 보안 기준을 강화
+- non-root 이미지에서 init 컨테이너가 자기 자신을 `chown`/`setuid`하려다 기동 실패하던 회귀를 수정해 root 실행과 이미 non-root인 실행을 모두 지원하도록 보강
+- Docker runner에서 `WORKDIR`가 먼저 만든 root 소유 `/data` 때문에 non-root SQLite가 열리지 않던 문제를 수정하고, 데이터 디렉터리를 `COPY --chown`으로 생성한 뒤 workdir로 사용하도록 순서를 교정
+- `make gate-e2e`에 이미지의 실제 Docker 사용자 설정이 `nonroot:nonroot`인지 확인하는 회귀 검사를 추가해 컨테이너 보안 기준을 smoke 단계에서 고정
+- non-root 이미지 변경 후 실제 PostgreSQL·Redis Compose smoke를 재실행해 readiness와 Redis 중단 시 fail-closed `503` 동작이 유지됨을 확인
+- CI `container-images`와 Gate E2E job에도 mcproxy 이미지의 `nonroot:nonroot` 실행 사용자 검증을 추가해 로컬 Docker hardening 기준을 CI에서 강제
+- 이미지가 처음부터 non-root로 실행되는 현재 동작에 맞춰 Compose의 불필요한 privilege capability와 root-init 설명을 제거하고 Docker/Kubernetes 운영 문서의 `/data` UID/GID 요구사항을 정정
+- Kubernetes mcproxy Deployment에 `fsGroup: 65532`와 `OnRootMismatch`를 추가해 PVC 마운트에서도 non-root `/data` 접근을 보장하고, production guard와 negative smoke로 설정 누락을 차단
+- Kubernetes 일반/HA mcproxy 매니페스트에 `runAsNonRoot: true`, `runAsUser/runAsGroup: 65532`를 명시하고 production guard negative smoke를 추가해 이미지 외부에서도 non-root 정책을 강제
+- Kubernetes production guard가 일반·HA mcproxy의 UID/GID 65532 값까지 각각 확인하도록 강화하고 UID/GID 누락 negative smoke를 추가
+- 실제 `config.go`와 README 환경변수 목록을 대조해 SQLite 경로, 로그인 제한, actor secret, API throttle, ping fallback, Loki 설정을 한·영 운영 문서에 추가
+- GitHub Actions commit pin, Docker base image digest, Compose service image digest를 검사하는 `deploy/supply-chain-check.sh`를 추가하고 로컬 `validate-deploy`·CI deployment job·`release-check`에 연결
+- 운영 예시 파일 `inc.env`에 README와 실제 config가 지원하는 `MCPROXY_ADMIN_THROTTLE` 설정 예시를 추가해 환경설정 문서 간 누락을 해소
+- 공급망 검사에 임시 unpinned Action/image를 주입하는 negative smoke를 실행해 mutable tag를 실제로 거부함을 확인
+- 런타임·preflight 환경변수 목록이 한·영 README와 `inc.env`에 모두 존재하는지 검사하는 `deploy/config-doc-check.sh`를 추가하고 `validate-deploy`·CI·`release-check`에 연결
+- 설정 문서 누락을 임시 복사본으로 재현하는 `config-doc-check-smoke`를 추가해 CI와 `release-check`에서 negative 동작까지 자동 검증
+- 한·영 README의 검증 명령 목록에 공급망 pin 검사와 설정 문서 동기화/negative smoke 명령을 추가해 운영 사용법과 실제 Make 타깃을 일치
+- root README에 남아 있던 init 기반 privilege-drop 설명을 현재 이미지의 `USER nonroot:nonroot` 동작에 맞춰 한·영 모두 정정
+- 최신 작업 트리에서 `make panel-rehearsal`을 재실행해 패널 로그인/세션, 회원·scope, legacy migration, CSRF·upstream allowlist, 백업/복구 전체 흐름 통과
+- 최신 이미지와 스키마 기준으로 `make postgres-restore-smoke`를 재실행해 PostgreSQL migration, custom-format dump/restore, fixture 검증까지 통과
+- `go list -m -u all`을 최신 module proxy 기준으로 재확인해 직접 사용하는 Gate/Chi/pgx/Redis/GeoIP/SQLite/Ent/Prometheus 의존성에 즉시 적용할 업데이트 후보가 없음을 확인; 간접 후보는 govulncheck 통과 상태에서 무리하게 일괄 승격하지 않음
+- Kubernetes rendered manifest server-side dry-run과 opt-in rollout/readiness rehearsal 도구를 추가하고, 기본값이 클러스터를 변경하지 않도록 구성
+- rollout rehearsal에 선택적 `KUBE_CONTEXT` 출력과 `CONFIRM_APPLY` 이중 확인을 추가해 잘못된 클러스터 적용 위험을 줄임
+- rollout rehearsal의 실제 apply는 `KUBE_CONTEXT`를 필수로 해 현재 로컬 context 오사용 가능성까지 차단
+- Kubernetes production guard가 rendered ExternalSecret의 SecretStore/remote key와 TEST-NET·example placeholder도 거부하도록 확장하고 negative smoke로 검증
+- rendered ExternalSecret에 mcproxy/panel 필수 secretKey mapping이 누락되지 않았는지 production guard가 확인하도록 보강하고 negative smoke 추가
+- ExternalSecret mapping guard 변경 후 최신 작업 트리에서 `make release-check`를 재실행해 Go/race/vet, SvelteKit check/build, govulncheck, npm audit, Prometheus 21개 rule/config, preflight와 Kubernetes guard까지 모두 통과
+- Kubernetes egress 예시에서 광범위한 `0.0.0.0/0:443` GeoIP 규칙을 제거하고 공급자별 제한 CIDR를 명시적으로 추가하도록 보안 기본값을 강화
+- production guard가 rendered NetworkPolicy의 `0.0.0.0/0`·`::/0` unrestricted CIDR를 거부하도록 고정하고 negative smoke 추가
+- BungeeGuard lifecycle 회귀 테스트가 생성·복구·회전 토큰의 32자 lowercase-hex 형식까지 검증하도록 강화
+- 관리패널 대시보드에 실제 Prometheus alert 기준(Gate 미준비, Redis degraded, 30초 초과 stale cache, 감사 저장 실패)을 다국어 운영 상태 영역으로 표시하고 i18n parity/build 검증 통과
+- 대시보드 운영 상태 영역 변경 후 실제 Docker `make panel-rehearsal`을 재실행해 로그인·회원 scope·legacy migration·CSRF/upstream allowlist·백업/복구까지 통과
+- Prometheus 운영 문서에 1시간 peak baseline, latency/block ratio/DB pool pressure PromQL, 24시간 observation 및 명시적 정책 변경 원칙을 추가
+- ExternalSecret에서 선택적 `admin-actor-secret`이 한 workload에만 매핑되는 구성을 production guard가 거부하도록 보강
+- actor secret partial mapping negative fixture를 Kubernetes production smoke에 추가해 양쪽 workload 동시 매핑 계약을 회귀 고정
+- actor secret 양쪽 mapping의 `remoteRef.key` 동일성까지 production guard와 negative smoke로 검증
+- 최신 패널 membership/security 변경 후 `make panel-backup-smoke`를 재실행해 checksum mismatch 거부, 복구, mode 600을 확인
+- ExternalSecret actor mapping을 정확히 양쪽 1회씩만 허용해 중복/부분 매핑도 production guard에서 차단
+- release gate와 Gate/Compose/PostgreSQL restore/admin-panel runtime smoke를 한 번에 실행하는 `make ops-rehearsal` 운영 검증 target 추가
+- 한국어 README에도 `make ops-rehearsal` 전체 운영 검증 절차를 연결해 배포 전 실행 경로를 문서화
+- 영문 루트 README에도 `make ops-rehearsal`을 연결해 양국어 운영 진입점을 일치
+- 최신 작업 트리에서 `make release-check`를 재실행해 Go test/race/vet, SvelteKit check/build, govulncheck(`No vulnerabilities found`), npm audit(`0 vulnerabilities`), Prometheus 21개 rule/config, 배포 preflight와 Kubernetes guard까지 통과
+- 관리패널 대시보드의 즉시 대응 상태 영역을 로그인 후 HTML과 `aria-live`까지 확인하는 `smoke-dashboard.mjs` 및 `panel-dashboard-smoke`를 추가하고 실제 Docker 스모크 통과
+- 허용된 CORS Origin의 운영 도구가 서명된 감사 actor를 사용할 수 있도록 `X-Admin-Actor`·`X-Admin-Actor-Signature` preflight 허용을 추가하고 API 회귀 테스트 통과
+- 대시보드 스모크 스크립트의 응답 타입 주석을 보강해 SvelteKit `svelte-check` 0 errors/0 warnings를 회복
+- CI가 로컬 검증과 동일하게 `panel-dashboard-smoke`를 실행하고 신규 패널/Kubernetes 스크립트의 실행 권한·쉘 문법까지 검사하도록 보강
+- CI 범위 보강 후 최신 작업 트리에서 API/store/Gate race 테스트와 SvelteKit production build를 재실행해 통과
+- 최신 의존성 상태에서 `make security-audit`를 재실행해 govulncheck `No vulnerabilities found`, 패널 `npm audit` 0 vulnerabilities를 확인했으며 직접 의존성의 즉시 업데이트 후보는 없음
+- 회원제 권한 감사에서 Auditor가 회원·초대 목록을 볼 수 있던 경계를 발견해 Owner/Admin 전용으로 수정하고, 실제 Docker membership smoke에 Auditor 접근 차단 회귀를 추가
+- 관리패널 서버 화면에서 Viewer/Auditor의 생성·삭제·라우팅 편집 버튼과 Operator의 삭제 버튼이 노출되던 UI 불일치를 역할별 조건 렌더링으로 정리하고 Svelte check 및 Docker membership smoke 통과
+- 서버별 정책·Geo·룰 편집 폼도 Owner/Admin 및 허용된 서버 scope에만 렌더링하도록 정리하고 production 이미지 빌드와 membership smoke 재검증 통과
+- 역할별 서버 편집 UI 정리 후 Svelte check와 실제 Docker membership smoke를 재실행해 템플릿 구조·권한 흐름 모두 통과
