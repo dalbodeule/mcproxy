@@ -100,7 +100,7 @@ function canManageServers(member: Member) {
 }
 
 function canManageTokens(member: Member) {
-	return member.role === 'owner' || member.role === 'admin' || member.role === 'operator';
+	return member.role === 'owner' || member.role === 'admin';
 }
 
 function canReadTokens(member: Member) {
@@ -111,7 +111,7 @@ function canReadTokens(member: Member) {
 // do not let a catch-all route become a general authenticated upstream proxy
 // when new API endpoints are added later or when a path contains dot segments.
 function isSupportedPanelPath(path: string) {
-	return /^(?:stats|audits|servers(?:\/\d+(?:\/bungeeguard-token)?)?|policy\/(?:global|geo|servers\/\d+)|rules(?:\/\d+)?)$/.test(path);
+	return /^(?:stats|audits|servers(?:\/\d+(?:\/bungeeguard-token|\/health)?)?|policy\/(?:global|geo|servers\/\d+)|rules(?:\/\d+)?)$/.test(path);
 }
 
 function mutationAllowed(path: string, method: string, body: Uint8Array, member: Member) {
@@ -134,6 +134,13 @@ function mutationAllowed(path: string, method: string, body: Uint8Array, member:
 	if (path === 'rules' || path === 'rules/') return method === 'POST' && canManageServers(member);
 	if (path.startsWith('rules/')) return method === 'DELETE' && canManageServers(member);
 	return false;
+}
+
+function scopedReadDenied(path: string, method: string, url: URL, member: Member) {
+	if ((method !== 'GET' && method !== 'HEAD') || member.role === 'owner' || member.serverScope.length === 0) return false;
+	if (path === 'policy/global' || path === 'policy/global/') return true;
+	if (path === 'rules' || path === 'rules/') return !url.searchParams.has('server_id');
+	return (path === 'policy/geo' || path === 'policy/geo/') && !url.searchParams.has('server_id');
 }
 
 function redactServerToken(item: Record<string, unknown>) {
@@ -174,15 +181,22 @@ async function verifyScopedRuleMutation(fetcher: typeof fetch, baseURL: string, 
 	const match = path.match(/^rules\/(\d+)$/);
 	if (!match) return false;
 	try {
-		const response = await fetcher(`${baseURL}/api/v1/rules/`, {
-			headers: { Authorization: `Bearer ${adminToken}` },
-			signal: AbortSignal.timeout(8_000)
-		});
-		if (!response.ok) return false;
-		const payload = await response.json() as { items?: Array<{ id?: unknown; server_id?: unknown }> };
-		const item = payload.items?.find((candidate) => Number(candidate.id) === Number(match[1]));
-		const serverID = Number(item?.server_id);
-		return Number.isInteger(serverID) && allowedServer(member, serverID);
+		const pageSize = 100;
+		for (let offset = 0; offset <= 1_000_000; offset += pageSize) {
+			const response = await fetcher(`${baseURL}/api/v1/rules/?limit=${pageSize}&offset=${offset}`, {
+				headers: { Authorization: `Bearer ${adminToken}` },
+				signal: AbortSignal.timeout(8_000)
+			});
+			if (!response.ok) return false;
+			const payload = await response.json() as { items?: Array<{ id?: unknown; server_id?: unknown }>; has_more?: boolean };
+			const item = payload.items?.find((candidate) => Number(candidate.id) === Number(match[1]));
+			if (item) {
+				const serverID = Number(item.server_id);
+				return Number.isInteger(serverID) && allowedServer(member, serverID);
+			}
+			if (payload.has_more !== true) return false;
+		}
+		return false;
 	} catch {
 		return false;
 	}
@@ -211,6 +225,7 @@ export const fallback: RequestHandler = async ({ params, request, fetch, url, co
 	if (queryServerIDs.some((id) => !allowedServer(member, id))) return new Response('Server scope denied', { status: 403 });
 	if (bodyServerID === 0) return new Response('Invalid server scope', { status: 400 });
 	if (bodyServerID !== null && !allowedServer(member, bodyServerID)) return new Response('Server scope denied', { status: 403 });
+	if (scopedReadDenied(path, request.method, url, member)) return new Response('Global read requires an unrestricted administrator', { status: 403 });
 	if (!mutationAllowed(path, request.method, body, member)) return new Response('Operation not allowed for this role', { status: 403 });
 	if (isGlobalMutation(path, request.method, url, body) && member.role !== 'owner' && member.serverScope.length > 0) return new Response('Global operation requires an unrestricted administrator', { status: 403 });
 	if (!(await verifyScopedRuleMutation(fetch, MCPROXY_API_URL, path, member, adminToken))) return new Response('Rule scope denied', { status: 403 });

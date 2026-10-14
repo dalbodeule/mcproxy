@@ -549,6 +549,9 @@ func TestBungeeGuardRegistersPerServerTokenWithoutGlobalSecret(t *testing.T) {
 	if !ok || wrapped.mode != gatecfg.BungeeGuardForwardingMode || wrapped.token != created.BungeeGuardAllowedToken {
 		t.Fatalf("registered server token = %#v, want %q", registered.ServerInfo(), created.BungeeGuardAllowedToken)
 	}
+	if registeredInGate, tokenApplied := rt.BackendStatus(created.ID, created.BungeeGuardAllowedToken); !registeredInGate || !tokenApplied {
+		t.Fatalf("initial Gate backend status = registered:%v token_applied:%v", registeredInGate, tokenApplied)
+	}
 
 	rotated, err := st.RotateBungeeGuardToken(context.Background(), created.ID)
 	if err != nil {
@@ -564,6 +567,9 @@ func TestBungeeGuardRegistersPerServerTokenWithoutGlobalSecret(t *testing.T) {
 	wrapped, ok = registered.ServerInfo().(*forwardingServerInfo)
 	if !ok || wrapped.token != rotated.BungeeGuardAllowedToken {
 		t.Fatalf("registered rotated token = %#v, want %q", registered.ServerInfo(), rotated.BungeeGuardAllowedToken)
+	}
+	if registeredInGate, tokenApplied := rt.BackendStatus(created.ID, rotated.BungeeGuardAllowedToken); !registeredInGate || !tokenApplied {
+		t.Fatalf("rotated Gate backend status = registered:%v token_applied:%v", registeredInGate, tokenApplied)
 	}
 }
 
@@ -613,12 +619,197 @@ func TestHostnameRouteCarriesServerPolicyScope(t *testing.T) {
 		t.Fatalf("expected hostname route to select survival, got %#v", got)
 	}
 	target, ok := rt.routeTargetForAddr(&net.TCPAddr{IP: net.ParseIP("203.0.113.10"), Port: 25565})
-	if ok {
-		t.Fatalf("unexpected route for unrelated address: %#v", target)
+	if !ok || target.name != "survival" || target.serverID <= 0 {
+		t.Fatalf("expected default route fallback with server scope, got target=%#v ok=%v", target, ok)
 	}
 	target, ok = rt.routeTargetForAddr(fakeAddr("play.example.test:25565"))
 	if !ok || target.name != "survival" || target.serverID <= 0 {
 		t.Fatalf("expected scoped route target, got target=%#v ok=%v", target, ok)
+	}
+}
+
+func TestRouteKeysDeduplicateHostnameAndAddressHost(t *testing.T) {
+	keys := routeKeys("Play.Example.Test", "play.example.test:25565")
+	if len(keys) != 2 || keys[0] != "play.example.test" || keys[1] != "play.example.test:25565" {
+		t.Fatalf("unexpected deduplicated route keys: %#v", keys)
+	}
+}
+
+func TestHostnameRouteDistributesAcrossBackends(t *testing.T) {
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	publicHost := "balanced.example.test"
+	for _, input := range []store.ServerInput{
+		{Name: "balanced-a", PublicHost: &publicHost, Upstream: "127.0.0.1:25571"},
+		{Name: "balanced-b", PublicHost: &publicHost, Upstream: "127.0.0.1:25572"},
+	} {
+		if _, err := st.CreateServer(ctx, input); err != nil {
+			t.Fatalf("create backend %s: %v", input.Name, err)
+		}
+	}
+	rt, err := New(ctx, Options{Bind: "0.0.0.0:25565", Store: st})
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+	if err := rt.syncServers(ctx); err != nil {
+		t.Fatalf("sync servers: %v", err)
+	}
+	seen := map[string]bool{}
+	counts := map[string]int{}
+	stable := rt.pickInitialServerForAddr(fakeAddr("balanced.example.test:25565"), fakeAddr("203.0.113.10:40000"))
+	if stable == nil {
+		t.Fatal("expected stable same-route selection")
+	}
+	for port := 1; port <= 8; port++ {
+		selected := rt.pickInitialServerForAddr(fakeAddr("balanced.example.test:25565"), fakeAddr(fmt.Sprintf("203.0.113.10:%d", port)))
+		if selected == nil || selected.ServerInfo().Name() != stable.ServerInfo().Name() {
+			t.Fatalf("same client IP changed backend when source port changed: stable=%s selected=%v", stable.ServerInfo().Name(), selected)
+		}
+	}
+	for hostOctet := 1; hostOctet <= 256; hostOctet++ {
+		selected := rt.pickInitialServerForAddr(fakeAddr("balanced.example.test:25565"), fakeAddr(fmt.Sprintf("203.0.113.%d:25565", hostOctet%256)))
+		if selected != nil {
+			name := selected.ServerInfo().Name()
+			seen[name] = true
+			counts[name]++
+		}
+	}
+	if len(seen) != 2 {
+		t.Fatalf("expected both same-route backends to receive traffic, got %v", seen)
+	}
+	for name, count := range counts {
+		if count < 64 || count > 192 {
+			t.Fatalf("expected roughly even same-route distribution, backend %s received %d/256 connections (%v)", name, count, counts)
+		}
+	}
+}
+
+func TestDefaultRouteDistributesAcrossBackendsAndCarriesScope(t *testing.T) {
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	for _, input := range []store.ServerInput{
+		{Name: "default-a", Upstream: "127.0.0.1:25573"},
+		{Name: "default-b", Upstream: "127.0.0.1:25574"},
+	} {
+		if _, err := st.CreateServer(ctx, input); err != nil {
+			t.Fatalf("create backend %s: %v", input.Name, err)
+		}
+	}
+	rt, err := New(ctx, Options{Bind: "0.0.0.0:25565", Store: st})
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+	if err := rt.syncServers(ctx); err != nil {
+		t.Fatalf("sync servers: %v", err)
+	}
+	seen := map[string]bool{}
+	counts := map[string]int{}
+	for hostOctet := 1; hostOctet <= 256; hostOctet++ {
+		remote := fakeAddr(fmt.Sprintf("198.51.100.%d:25565", hostOctet%256))
+		selected := rt.pickInitialServerForAddr(fakeAddr("unknown.example.test:25565"), remote)
+		if selected == nil {
+			t.Fatal("expected default route backend")
+		}
+		name := selected.ServerInfo().Name()
+		seen[name] = true
+		counts[name]++
+	}
+	if len(seen) != 2 {
+		t.Fatalf("expected both default backends to receive traffic, got %v", seen)
+	}
+	for name, count := range counts {
+		if count < 64 || count > 192 {
+			t.Fatalf("expected roughly even default distribution, backend %s received %d/256 connections (%v)", name, count, counts)
+		}
+	}
+	target, ok := rt.routeTargetForAddr(fakeAddr("unknown.example.test:25565"), fakeAddr("198.51.100.7:40000"))
+	if !ok || target.serverID <= 0 {
+		t.Fatalf("expected default route target with server scope, got target=%#v ok=%v", target, ok)
+	}
+}
+
+func TestDefaultRouteIncludesExplicitlyNamedBackends(t *testing.T) {
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	publicA := "a.example.test"
+	publicB := "b.example.test"
+	for _, input := range []store.ServerInput{
+		{Name: "named-a", PublicHost: &publicA, Upstream: "127.0.0.1:25578"},
+		{Name: "named-b", PublicHost: &publicB, Upstream: "127.0.0.1:25579"},
+		{Name: "disabled-backend", Upstream: "127.0.0.1:25580", Enabled: boolPtr(false)},
+	} {
+		if _, err := st.CreateServer(ctx, input); err != nil {
+			t.Fatalf("create backend %s: %v", input.Name, err)
+		}
+	}
+	rt, err := New(ctx, Options{Bind: "0.0.0.0:25565", Store: st})
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+	if err := rt.syncServers(ctx); err != nil {
+		t.Fatalf("sync servers: %v", err)
+	}
+
+	seen := map[string]bool{}
+	for hostOctet := 1; hostOctet <= 256; hostOctet++ {
+		remote := fakeAddr(fmt.Sprintf("203.0.113.%d:25565", hostOctet%256))
+		selected := rt.pickInitialServerForAddr(fakeAddr("unmatched.example.test:25565"), remote)
+		if selected == nil {
+			t.Fatal("expected default route backend")
+		}
+		seen[selected.ServerInfo().Name()] = true
+	}
+	if len(seen) != 2 {
+		t.Fatalf("expected all enabled backends in the default pool, got %v", seen)
+	}
+}
+
+func TestHostnameRouteMinimizesRemappingWhenBackendAdded(t *testing.T) {
+	ctx := context.Background()
+	st := testutil.NewTestStore(t)
+	publicHost := "stable.example.test"
+	for _, input := range []store.ServerInput{
+		{Name: "stable-a", PublicHost: &publicHost, Upstream: "127.0.0.1:25575"},
+		{Name: "stable-b", PublicHost: &publicHost, Upstream: "127.0.0.1:25576"},
+	} {
+		if _, err := st.CreateServer(ctx, input); err != nil {
+			t.Fatalf("create backend %s: %v", input.Name, err)
+		}
+	}
+	rt, err := New(ctx, Options{Bind: "0.0.0.0:25565", Store: st})
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+	if err := rt.syncServers(ctx); err != nil {
+		t.Fatalf("initial sync: %v", err)
+	}
+	before := make(map[string]string, 512)
+	for i := 1; i <= 512; i++ {
+		remote := fakeAddr(fmt.Sprintf("198.18.%d.%d:25565", (i/256)%256, i%256))
+		selected := rt.pickInitialServerForAddr(fakeAddr("stable.example.test:25565"), remote)
+		if selected == nil {
+			t.Fatal("expected initial backend")
+		}
+		before[remote.String()] = selected.ServerInfo().Name()
+	}
+	if _, err := st.CreateServer(ctx, store.ServerInput{Name: "stable-c", PublicHost: &publicHost, Upstream: "127.0.0.1:25577"}); err != nil {
+		t.Fatalf("create added backend: %v", err)
+	}
+	if err := rt.syncServers(ctx); err != nil {
+		t.Fatalf("sync after backend addition: %v", err)
+	}
+	changed := 0
+	for remote, oldName := range before {
+		selected := rt.pickInitialServerForAddr(fakeAddr("stable.example.test:25565"), fakeAddr(remote))
+		if selected == nil {
+			t.Fatal("expected backend after addition")
+		}
+		if selected.ServerInfo().Name() != oldName {
+			changed++
+		}
+	}
+	if changed >= 300 {
+		t.Fatalf("too many clients remapped after adding one of three backends: %d/512", changed)
 	}
 }
 

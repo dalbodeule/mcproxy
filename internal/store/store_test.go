@@ -41,6 +41,27 @@ func TestDistributedCounterFailClosedMode(t *testing.T) {
 	}
 }
 
+func TestValidateServerRoutingInputs(t *testing.T) {
+	validHost := "play.example.test"
+	validAddr := "play.example.test:25565"
+	valid := ServerInput{Name: "play", Upstream: "127.0.0.1:25565", PublicHost: &validHost, PublicAddr: &validAddr}
+	if err := validateServerInput(valid, true); err != nil {
+		t.Fatalf("valid routing input rejected: %v", err)
+	}
+	for name, input := range map[string]ServerInput{
+		"upstream port text":              {Name: "bad", Upstream: "127.0.0.1:mc"},
+		"upstream port zero":              {Name: "bad", Upstream: "127.0.0.1:0"},
+		"public address missing port":     {Name: "bad", Upstream: "127.0.0.1:25565", PublicAddr: stringPtr("play.example.test")},
+		"public hostname with whitespace": {Name: "bad", Upstream: "127.0.0.1:25565", PublicHost: stringPtr("play example.test")},
+	} {
+		if err := validateServerInput(input, true); err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+	}
+}
+
+func stringPtr(value string) *string { return &value }
+
 func TestAuditWriteFailureIsCounted(t *testing.T) {
 	st := &Store{}
 	if err := st.writeAudit(context.Background(), nil, nil, "test.audit", map[string]any{"ok": true}); err == nil {
@@ -67,7 +88,7 @@ func TestAuditWriteSanitizesMinecraftComponentBeforeEntJSON(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("write component audit: %v", err)
 	}
-	items, err := st.ListAudits(ctx, 1, 0, "connect.disconnect", nil)
+	items, err := st.ListAudits(ctx, 1, 0, "connect.disconnect", "", nil)
 	if err != nil {
 		t.Fatalf("list component audit: %v", err)
 	}

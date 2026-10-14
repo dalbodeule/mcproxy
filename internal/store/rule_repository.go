@@ -12,7 +12,7 @@ import (
 // ListRules returns rules for the requested server scope. Evaluation remains
 // in the data-plane path; this file owns only control-plane rule persistence.
 func (s *Store) ListRules(ctx context.Context, serverID *int) ([]RuleDTO, error) {
-	q := s.client.Rule.Query().Order(ent.Desc(rule.FieldCreatedAt))
+	q := s.client.Rule.Query().Order(ent.Desc(rule.FieldCreatedAt), ent.Desc(rule.FieldID))
 	if serverID != nil {
 		q = q.Where(rule.HasServerWith(server.IDEQ(*serverID)))
 	}
@@ -25,6 +25,34 @@ func (s *Store) ListRules(ctx context.Context, serverID *int) ([]RuleDTO, error)
 		out = append(out, ruleDTO(n))
 	}
 	return out, nil
+}
+
+// ListRulesPage returns one control-plane page and a look-ahead flag. The
+// unpaged ListRules method remains available for data-plane/cache callers.
+func (s *Store) ListRulesPage(ctx context.Context, serverID *int, limit, offset int) ([]RuleDTO, bool, error) {
+	if limit <= 0 || limit > 101 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	q := s.client.Rule.Query().Order(ent.Desc(rule.FieldCreatedAt), ent.Desc(rule.FieldID)).Limit(limit).Offset(offset)
+	if serverID != nil {
+		q = q.Where(rule.HasServerWith(server.IDEQ(*serverID)))
+	}
+	nodes, err := q.All(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	hasMore := len(nodes) > limit-1
+	if hasMore {
+		nodes = nodes[:limit-1]
+	}
+	out := make([]RuleDTO, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, ruleDTO(n))
+	}
+	return out, hasMore, nil
 }
 
 func (s *Store) CreateRule(ctx context.Context, in RuleInput) (*RuleDTO, error) {

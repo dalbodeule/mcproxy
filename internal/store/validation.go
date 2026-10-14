@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 )
 
@@ -19,8 +20,8 @@ func validateServerInput(in ServerInput, create bool) error {
 		return fmt.Errorf("name is too long")
 	}
 	if strings.TrimSpace(in.Upstream) != "" {
-		if _, _, err := net.SplitHostPort(strings.TrimSpace(in.Upstream)); err != nil {
-			return fmt.Errorf("upstream must be host:port")
+		if err := validateHostPort(strings.TrimSpace(in.Upstream), "upstream"); err != nil {
+			return err
 		}
 	}
 	if in.Priority != nil && (*in.Priority < 0 || *in.Priority > 1_000_000) {
@@ -28,13 +29,13 @@ func validateServerInput(in ServerInput, create bool) error {
 	}
 	if in.PublicHost != nil && strings.TrimSpace(*in.PublicHost) != "" {
 		host := strings.TrimSpace(*in.PublicHost)
-		if strings.ContainsAny(host, "/?#@") || net.ParseIP(host) != nil {
+		if strings.ContainsAny(host, " \t\r\n:/?#@") || net.ParseIP(host) != nil || strings.HasPrefix(host, ".") || strings.HasSuffix(host, ".") {
 			return fmt.Errorf("invalid public_host")
 		}
 	}
 	if in.PublicAddr != nil && strings.TrimSpace(*in.PublicAddr) != "" {
-		if _, _, err := net.SplitHostPort(strings.TrimSpace(*in.PublicAddr)); err != nil {
-			return fmt.Errorf("public_addr must be host:port")
+		if err := validateHostPort(strings.TrimSpace(*in.PublicAddr), "public_addr"); err != nil {
+			return err
 		}
 	}
 	if in.PingMOTD != nil && len([]rune(strings.TrimSpace(*in.PingMOTD))) > 256 {
@@ -42,6 +43,21 @@ func validateServerInput(in ServerInput, create bool) error {
 	}
 	if in.ForwardingMode != nil && !isValidForwardingMode(*in.ForwardingMode) {
 		return fmt.Errorf("forwarding_mode must be one of none, legacy, velocity, or bungeeguard")
+	}
+	return nil
+}
+
+func validateHostPort(value, field string) error {
+	host, portText, err := net.SplitHostPort(value)
+	if err != nil || strings.TrimSpace(host) == "" {
+		return fmt.Errorf("%s must be host:port", field)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("%s port must be between 1 and 65535", field)
+	}
+	if strings.ContainsAny(host, " \t\r\n") {
+		return fmt.Errorf("%s host is invalid", field)
 	}
 	return nil
 }

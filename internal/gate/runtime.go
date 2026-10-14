@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"net"
 	"sort"
 	"strings"
@@ -37,8 +38,9 @@ type Runtime struct {
 	store          *store.Store
 	geo            *geo.Service
 	tryOrder       []string
-	routes         map[string]routeTarget
+	routes         map[string][]routeTarget
 	serverIDs      map[string]int
+	routeCursor    atomic.Uint64
 	pingMOTD       map[string]string
 	syncEvery      time.Duration
 	pingCacheTTL   time.Duration
@@ -60,6 +62,12 @@ type routeTarget struct {
 	name     string
 	serverID int
 }
+
+// defaultRouteKey represents enabled backends without an explicit public
+// hostname/address. Keeping it as an internal key avoids colliding with a
+// real hostname while allowing the default pool to use the same deterministic
+// distribution and server-scoped policy lookup as named routes.
+const defaultRouteKey = "\x00default"
 
 // bungeeGuardServerInfo carries the token belonging to one backend. Gate's
 // public ServerDialer hook lets us rewrite the first backend handshake while
@@ -395,7 +403,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		geo:            opts.Geo,
 		syncEvery:      5 * time.Second,
 		tryOrder:       append([]string(nil), cfg.Try...),
-		routes:         make(map[string]routeTarget),
+		routes:         make(map[string][]routeTarget),
 		serverIDs:      make(map[string]int),
 		pingCacheTTL:   time.Duration(opts.Config.PingCacheTTL) * time.Second,
 		pingFallback:   pingFallback{motd: opts.Config.PingFallbackMotd, offlineMotd: opts.Config.PingOfflineMotd, favicon: opts.Config.PingFallbackFavicon},
@@ -420,7 +428,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 			return
 		}
 		var serverID *int
-		if target, ok := r.routeTargetForAddr(e.Conn().VirtualHost()); ok {
+		if target, ok := r.routeTargetForAddr(e.Conn().VirtualHost(), e.Conn().RemoteAddr()); ok {
 			id := target.serverID
 			serverID = &id
 		}
@@ -447,7 +455,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	event.Subscribe(p.Event(), 0, func(e *javaproxy.LoginEvent) {
 		remoteIP := netIPString(e.Player().RemoteAddr())
 		var serverID *int
-		if target, ok := r.routeTargetForAddr(e.Player().VirtualHost()); ok {
+		if target, ok := r.routeTargetForAddr(e.Player().VirtualHost(), e.Player().RemoteAddr()); ok {
 			id := target.serverID
 			serverID = &id
 		}
@@ -499,7 +507,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 
 	event.Subscribe(p.Event(), 0, func(e *javaproxy.PlayerChooseInitialServerEvent) {
 		host := hostnameFromAddr(e.Player().VirtualHost())
-		if initial := r.pickInitialServerForAddr(e.Player().VirtualHost()); initial != nil {
+		if initial := r.pickInitialServerForAddr(e.Player().VirtualHost(), e.Player().RemoteAddr()); initial != nil {
 			observability.Info("gate_initial_server_selected", "host", host, "selected_server", initial.ServerInfo().Name(), "selected_upstream", initial.ServerInfo().Addr().String())
 			e.SetInitialServer(initial)
 		} else {
@@ -773,6 +781,42 @@ func (r *Runtime) BackendCount() int {
 	return len(p.Servers())
 }
 
+// BackendStatus reports whether a configured backend is registered in Gate.
+// For BungeeGuard backends it also verifies that the current token has been
+// applied to the in-memory forwarding wrapper.
+func (r *Runtime) BackendStatus(serverID int, expectedToken string) (registered, tokenApplied bool) {
+	if r == nil {
+		return false, false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.proxy == nil {
+		return false, false
+	}
+	for name, id := range r.serverIDs {
+		if id != serverID {
+			continue
+		}
+		registeredServer := r.proxy.Server(name)
+		if registeredServer == nil {
+			return false, false
+		}
+		if expectedToken == "" {
+			return true, true
+		}
+		switch info := registeredServer.ServerInfo().(type) {
+		case *bungeeGuardServerInfo:
+			return true, info.token == expectedToken
+		case *forwardingServerInfo:
+			if info.mode == gatecfg.BungeeGuardForwardingMode {
+				return true, info.token == expectedToken
+			}
+		}
+		return true, true
+	}
+	return false, false
+}
+
 func (r *Runtime) syncLoop(ctx context.Context) {
 	ticker := time.NewTicker(r.syncEvery)
 	defer ticker.Stop()
@@ -836,7 +880,7 @@ func (r *Runtime) syncServers(ctx context.Context) error {
 	desiredModes := make(map[string]gatecfg.ForwardingMode, len(servers))
 	resolved := make(map[string]*net.TCPAddr, len(servers))
 	tryOrder := make([]string, 0, len(servers))
-	routes := make(map[string]routeTarget, len(servers))
+	routes := make(map[string][]routeTarget, len(servers))
 	serverIDs := make(map[string]int, len(servers))
 	sort.SliceStable(servers, func(i, j int) bool {
 		if servers[i].Priority != servers[j].Priority {
@@ -864,12 +908,12 @@ func (r *Runtime) syncServers(ctx context.Context) error {
 		serverIDs[strings.ToLower(name)] = s.ID
 		tryOrder = append(tryOrder, name)
 		target := routeTarget{name: name, serverID: s.ID}
+		routes[defaultRouteKey] = append(routes[defaultRouteKey], target)
 		for _, key := range routeKeys(s.PublicHost, s.PublicAddr) {
-			if previous, exists := routes[key]; exists {
-				observability.Warn("gate_route_collision", "route_key", key, "selected_server", previous.name, "ignored_server", name)
-				continue
+			if previous := routes[key]; len(previous) > 0 {
+				observability.Info("gate_route_backend_added", "route_key", key, "server", name, "backend_count", len(previous)+1)
 			}
-			routes[key] = target
+			routes[key] = append(routes[key], target)
 		}
 	}
 	if len(tryOrder) == 0 {
@@ -964,15 +1008,21 @@ func (r *Runtime) syncServers(ctx context.Context) error {
 }
 
 func (r *Runtime) pickInitialServer(host string) javaproxy.RegisteredServer {
-	return r.pickInitialServerByKeys([]string{strings.ToLower(strings.TrimSpace(host))})
+	return r.pickInitialServerByKeys([]string{strings.ToLower(strings.TrimSpace(host))}, host)
 }
 
-func (r *Runtime) pickInitialServerForAddr(addr net.Addr) javaproxy.RegisteredServer {
+func (r *Runtime) pickInitialServerForAddr(addr net.Addr, salt ...net.Addr) javaproxy.RegisteredServer {
 	keys := []string{strings.ToLower(strings.TrimSpace(addrString(addr))), hostnameFromAddr(addr)}
-	return r.pickInitialServerByKeys(keys)
+	seed := addrString(addr)
+	if len(salt) > 0 {
+		// Keep a player on the same backend across reconnects. The source TCP
+		// port is ephemeral and must not participate in the distribution key.
+		seed += "|" + netIPString(salt[0])
+	}
+	return r.pickInitialServerByKeys(keys, seed)
 }
 
-func (r *Runtime) pickInitialServerByKeys(keys []string) javaproxy.RegisteredServer {
+func (r *Runtime) pickInitialServerByKeys(keys []string, seed string) javaproxy.RegisteredServer {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if r.proxy == nil {
@@ -984,18 +1034,26 @@ func (r *Runtime) pickInitialServerByKeys(keys []string) javaproxy.RegisteredSer
 		if key == "" {
 			continue
 		}
-		if target, ok := r.routes[key]; ok {
-			if server := r.proxy.Server(target.name); server != nil {
-				observability.Info("gate_pick_server_route_hit", "route_key", key, "target", target.name, "upstream", server.ServerInfo().Addr().String())
+		if targets, ok := r.routes[key]; ok {
+			if server := r.pickRegisteredTarget(targets, seed); server != nil {
+				observability.Info("gate_pick_server_route_hit", "route_key", key, "target", server.ServerInfo().Name(), "upstream", server.ServerInfo().Addr().String(), "backend_count", len(targets))
 				return server
 			}
-			observability.Warn("gate_pick_server_route_target_missing", "route_key", key, "target", target.name)
+			observability.Warn("gate_pick_server_route_targets_missing", "route_key", key, "backend_count", len(targets))
 		}
 	}
-	for _, name := range r.tryOrder {
-		if server := r.proxy.Server(name); server != nil {
-			observability.Warn("gate_pick_server_fallback_try_order", "route_keys", keys, "fallback_server", name, "upstream", server.ServerInfo().Addr().String())
-			return server
+	if server := r.pickRegisteredTarget(r.routes[defaultRouteKey], seed); server != nil {
+		observability.Info("gate_pick_server_default_route", "target", server.ServerInfo().Name(), "upstream", server.ServerInfo().Addr().String(), "backend_count", len(r.routes[defaultRouteKey]))
+		return server
+	}
+	if len(r.tryOrder) > 0 {
+		start := int(r.routeCursor.Add(1)-1) % len(r.tryOrder)
+		for i := 0; i < len(r.tryOrder); i++ {
+			name := r.tryOrder[(start+i)%len(r.tryOrder)]
+			if server := r.proxy.Server(name); server != nil {
+				observability.Info("gate_pick_server_fallback_round_robin", "route_keys", keys, "fallback_server", name, "upstream", server.ServerInfo().Addr().String(), "backend_count", len(r.tryOrder))
+				return server
+			}
 		}
 	}
 	servers := r.proxy.Servers()
@@ -1007,26 +1065,93 @@ func (r *Runtime) pickInitialServerByKeys(keys []string) javaproxy.RegisteredSer
 	return servers[0]
 }
 
-func (r *Runtime) routeTargetForAddr(addr net.Addr) (routeTarget, bool) {
+func (r *Runtime) routeTargetForAddr(addr net.Addr, salt ...net.Addr) (routeTarget, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	seed := addrString(addr)
+	if len(salt) > 0 {
+		seed += "|" + netIPString(salt[0])
+	}
 	for _, key := range []string{strings.ToLower(strings.TrimSpace(addrString(addr))), hostnameFromAddr(addr)} {
-		if target, ok := r.routes[key]; ok && key != "" {
-			return target, true
+		if targets, ok := r.routes[key]; ok && key != "" {
+			if target, ok := r.pickRouteTarget(targets, seed); ok {
+				return target, true
+			}
 		}
+	}
+	if target, ok := r.pickRouteTarget(r.routes[defaultRouteKey], seed); ok {
+		return target, true
 	}
 	return routeTarget{}, false
 }
 
+func (r *Runtime) pickRegisteredTarget(targets []routeTarget, seed string) javaproxy.RegisteredServer {
+	if r.proxy == nil || len(targets) == 0 {
+		return nil
+	}
+	var selected javaproxy.RegisteredServer
+	var selectedScore uint64
+	for _, target := range targets {
+		if server := r.proxy.Server(target.name); server != nil {
+			score := routeTargetScore(seed, target.name)
+			if selected == nil || score > selectedScore || (score == selectedScore && strings.ToLower(target.name) < strings.ToLower(selected.ServerInfo().Name())) {
+				selected = server
+				selectedScore = score
+			}
+		}
+	}
+	return selected
+}
+
+func (r *Runtime) pickRouteTarget(targets []routeTarget, seed string) (routeTarget, bool) {
+	if r.proxy == nil || len(targets) == 0 {
+		return routeTarget{}, false
+	}
+	var selected routeTarget
+	var selectedScore uint64
+	found := false
+	for _, target := range targets {
+		if r.proxy.Server(target.name) != nil {
+			score := routeTargetScore(seed, target.name)
+			if !found || score > selectedScore || (score == selectedScore && strings.ToLower(target.name) < strings.ToLower(selected.name)) {
+				selected = target
+				selectedScore = score
+				found = true
+			}
+		}
+	}
+	return selected, found
+}
+
+func routeTargetScore(seed, name string) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(seed))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(strings.ToLower(strings.TrimSpace(name))))
+	return h.Sum64()
+}
+
 func routeKeys(publicHost, publicAddr string) []string {
 	keys := make([]string, 0, 3)
+	seen := make(map[string]struct{}, 3)
+	add := func(value string) {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			return
+		}
+		if _, exists := seen[value]; exists {
+			return
+		}
+		seen[value] = struct{}{}
+		keys = append(keys, value)
+	}
 	if host := strings.ToLower(strings.TrimSpace(publicHost)); host != "" {
-		keys = append(keys, host)
+		add(host)
 	}
 	if addr := strings.ToLower(strings.TrimSpace(publicAddr)); addr != "" {
-		keys = append(keys, addr)
+		add(addr)
 		if host, _, err := net.SplitHostPort(addr); err == nil {
-			keys = append(keys, host)
+			add(host)
 		}
 	}
 	return keys

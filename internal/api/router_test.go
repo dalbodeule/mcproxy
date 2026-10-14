@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"mcproxy/internal/store"
 	"mcproxy/internal/testutil"
 )
 
@@ -145,7 +146,7 @@ func TestAuditPaginationReportsLookahead(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		items, err := st.ListAudits(context.Background(), 10, 0, event, nil)
+		items, err := st.ListAudits(context.Background(), 10, 0, event, "", nil)
 		if err != nil {
 			t.Fatalf("list seeded audits: %v", err)
 		}
@@ -177,6 +178,42 @@ func TestAuditPaginationReportsLookahead(t *testing.T) {
 	}
 }
 
+func TestAuditActorFilter(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	event := "test.audit.actor-filter"
+	if err := st.RecordAudit(context.Background(), "owner-alice", nil, event, map[string]any{"source": "alice"}); err != nil {
+		t.Fatalf("record alice audit: %v", err)
+	}
+	if err := st.RecordAudit(context.Background(), "operator-bob", nil, event, map[string]any{"source": "bob"}); err != nil {
+		t.Fatalf("record bob audit: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		items, err := st.ListAudits(context.Background(), 10, 0, event, "owner", nil)
+		if err != nil {
+			t.Fatalf("list actor-filter audits: %v", err)
+		}
+		if len(items) == 1 {
+			if items[0].Actor == nil || *items[0].Actor != "owner-alice" {
+				t.Fatalf("actor-filter result = %#v, want owner-alice", items)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for actor-filter audit, got %d items", len(items))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	r := NewRouter(testutil.NewTestConfig(t), Dependencies{Store: st})
+	req := authReq(t, http.MethodGet, "/api/v1/audits?event="+event+"&actor=bob", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "operator-bob") || strings.Contains(rec.Body.String(), "owner-alice") {
+		t.Fatalf("API actor filter response = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestAuditServerFilterBounds(t *testing.T) {
 	r := newTestRouter(t)
 	values := strings.TrimSuffix(strings.Repeat("1,", 257), ",")
@@ -185,6 +222,33 @@ func TestAuditServerFilterBounds(t *testing.T) {
 	r.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "too many values") {
 		t.Fatalf("expected bounded server_id filter, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRulePaginationReportsLookahead(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	for i := 0; i < 3; i++ {
+		target := fmt.Sprintf("203.0.113.%d", i+1)
+		if _, err := st.CreateRule(context.Background(), store.RuleInput{Kind: "ip-deny", Target: target}); err != nil {
+			t.Fatalf("create rule %d: %v", i, err)
+		}
+	}
+	r := NewRouter(testutil.NewTestConfig(t), Dependencies{Store: st})
+	req := authReq(t, http.MethodGet, "/api/v1/rules/?limit=2", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rule page expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var page struct {
+		Items   []json.RawMessage `json:"items"`
+		HasMore bool              `json:"has_more"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode rule page: %v", err)
+	}
+	if len(page.Items) != 2 || !page.HasMore {
+		t.Fatalf("rule page = (%d items, has_more=%v), want (2, true): %s", len(page.Items), page.HasMore, rec.Body.String())
 	}
 }
 
@@ -389,6 +453,15 @@ func TestServerLifecycleAndServerPolicy(t *testing.T) {
 	r.ServeHTTP(rec, authReq(t, http.MethodGet, "/api/v1/servers/1/", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get server expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, authReq(t, http.MethodGet, "/api/v1/servers/1/health", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"server_id":1`) {
+		t.Fatalf("server health expected 200 with server id, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var health map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &health); err != nil || health["status"] == nil {
+		t.Fatalf("server health response missing status: %s", rec.Body.String())
 	}
 	if id != 1 {
 		t.Fatalf("expected created server id 1, got %d", id)

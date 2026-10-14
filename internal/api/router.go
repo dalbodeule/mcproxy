@@ -38,6 +38,9 @@ type Dependencies struct {
 	// GateStats returns the current connected-player and registered-backend
 	// counts. It is optional for API-only deployments.
 	GateStats func() (players, backends int)
+	// GateBackendStatus reports whether a configured backend is registered in
+	// Gate and whether its current forwarding token has been applied.
+	GateBackendStatus func(serverID int, expectedToken string) (registered, tokenApplied bool)
 }
 
 type adminActorContextKey struct{}
@@ -52,6 +55,16 @@ func adminActor(ctx context.Context) string {
 		return actor
 	}
 	return "admin-api"
+}
+
+func serverHealthPayload(id int, status string, healthy bool, item *store.ServerDTO, deps Dependencies) map[string]any {
+	payload := map[string]any{"server_id": id, "status": status, "healthy": healthy}
+	if deps.GateBackendStatus != nil {
+		registered, tokenApplied := deps.GateBackendStatus(id, item.BungeeGuardAllowedToken)
+		payload["gate_registered"] = registered
+		payload["gate_token_applied"] = tokenApplied
+	}
+	return payload
 }
 
 func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
@@ -238,7 +251,7 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 			if !ok {
 				return
 			}
-			items, err := deps.Store.ListAudits(r.Context(), limit+1, offset, r.URL.Query().Get("event"), serverIDs)
+			items, err := deps.Store.ListAudits(r.Context(), limit+1, offset, r.URL.Query().Get("event"), r.URL.Query().Get("actor"), serverIDs)
 			if handleStoreError(w, "list audits", err) {
 				return
 			}
@@ -287,6 +300,28 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 						return
 					}
 					writeJSON(w, http.StatusOK, item)
+				})
+				sr.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+					id, ok := pathInt(w, r, "serverID")
+					if !ok {
+						return
+					}
+					item, err := deps.Store.GetServer(r.Context(), id)
+					if handleStoreError(w, "get server for health", err) {
+						return
+					}
+					if !item.Enabled {
+						writeJSON(w, http.StatusOK, serverHealthPayload(id, "disabled", false, item, deps))
+						return
+					}
+					dialer := net.Dialer{Timeout: 800 * time.Millisecond}
+					conn, dialErr := dialer.DialContext(r.Context(), "tcp", item.Upstream)
+					if dialErr != nil {
+						writeJSON(w, http.StatusOK, serverHealthPayload(id, "unreachable", false, item, deps))
+						return
+					}
+					_ = conn.Close()
+					writeJSON(w, http.StatusOK, serverHealthPayload(id, "healthy", true, item, deps))
 				})
 				sr.Put("/", func(w http.ResponseWriter, r *http.Request) {
 					id, ok := pathInt(w, r, "serverID")
@@ -461,15 +496,16 @@ func NewRouter(cfg config.Config, deps Dependencies) http.Handler {
 
 		api.Route("/rules", func(rr chi.Router) {
 			rr.Get("/", func(w http.ResponseWriter, r *http.Request) {
+				limit, offset := queryPage(r)
 				serverID, ok := optionalQueryInt(w, r, "server_id")
 				if !ok {
 					return
 				}
-				items, err := deps.Store.ListRules(r.Context(), serverID)
+				items, hasMore, err := deps.Store.ListRulesPage(r.Context(), serverID, limit+1, offset)
 				if handleStoreError(w, "list rules", err) {
 					return
 				}
-				writeJSON(w, http.StatusOK, map[string]any{"items": items})
+				writeJSON(w, http.StatusOK, map[string]any{"items": items, "has_more": hasMore, "limit": limit, "offset": offset})
 			})
 			rr.Post("/", func(w http.ResponseWriter, r *http.Request) {
 				var in store.RuleInput

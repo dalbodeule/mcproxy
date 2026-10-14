@@ -21,20 +21,21 @@ for traffic readiness, while `/health` is suitable for process liveness.
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/api/v1/stats` | Process-lifetime counters and configured resource counts. |
-| GET | `/api/v1/audits?limit=20&offset=0&event=...&server_id=1` | Recent audit events with `items`, `has_more`, `limit`, and `offset`; `limit` and `offset` are bounded. Repeat `server_id` for multiple scopes. |
+| GET | `/api/v1/audits?limit=20&offset=0&event=...&actor=...&server_id=1` | Recent audit events with `items`, `has_more`, `limit`, and `offset`; `limit` and `offset` are bounded. `actor` performs a case-insensitive partial match. Repeat `server_id` for multiple scopes. |
 | GET/POST | `/api/v1/servers/` | List or create backends. |
 | GET/PUT/DELETE | `/api/v1/servers/{id}/` | Read, update, or delete one backend. |
+| GET | `/api/v1/servers/{id}/health` | Perform a short TCP reachability check for the configured upstream; returns `healthy`, `unreachable`, or `disabled`. In the main process it also reports `gate_registered` and `gate_token_applied` so asynchronous Gate sync is visible. |
 | POST | `/api/v1/servers/{id}/bungeeguard-token` | Rotate that backend's 32-character BungeeGuard token. |
 | GET/PUT/DELETE | `/api/v1/policy/global` | Read or change the global threshold policy. |
 | GET/PUT/DELETE | `/api/v1/policy/servers/{id}` | Read or change a backend policy override. |
 | GET/PUT/DELETE | `/api/v1/policy/geo?server_id={id}` | Read or change global or backend Geo policy. Omit `server_id` for global scope. |
-| GET/POST | `/api/v1/rules/?server_id={id}` | List or create allow/deny rules. Omit `server_id` to use global scope. |
+| GET/POST | `/api/v1/rules/?server_id={id}&limit=25&offset=0` | List or create allow/deny rules. GET returns `items`, `has_more`, `limit`, and `offset`; omit `server_id` to use global scope. |
 | DELETE | `/api/v1/rules/{id}` | Delete a rule. |
+| POST | `/api/v1/evaluate` | Evaluate an attempted connection against the current policy. |
 
 The `event` audit filter accepts `connect.blocked`, `policy.update`, `geo.update`, `policy.reset`,
 `server.create`, `server.update`, `server.delete`,
 `server.bungeeguard_token.rotate`, `rule.create`, and `rule.delete`.
-| POST | `/api/v1/evaluate` | Evaluate an attempted connection against the current policy. |
 
 The router accepts both the documented trailing-slash collection paths and the
 panel's normalized paths. JSON mutation bodies are limited to 1 MiB.
@@ -50,6 +51,15 @@ Content-Type: application/json
 
 {"name":"survival","upstream":"10.0.0.12:25565","forwarding_mode":"bungeeguard","enabled":true}
 ```
+
+To distribute a public route across multiple backends, create multiple enabled
+servers with the same `public_host` (or `public_addr`). Gate selects among the
+matching backends using a deterministic client-address hash; the source TCP
+port is intentionally excluded so reconnects from one client remain stable.
+For an unmatched public host, all enabled servers form the default pool—even
+servers that have their own explicit public route—and use the same hash
+distribution. If a selected backend is no longer registered, the next
+available backend in that pool is used.
 
 Create a server-scoped rule:
 

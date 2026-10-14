@@ -77,7 +77,13 @@ func run() int {
 			return gateRuntime.PlayerCount(), gateRuntime.BackendCount()
 		}
 	}
-	router := api.NewRouter(cfg, api.Dependencies{Store: st, Geo: geoSvc, GateReady: gateReady, GateStats: gateStats})
+	gateBackendStatus := func(serverID int, expectedToken string) (registered, tokenApplied bool) {
+		if gateRuntime == nil {
+			return false, false
+		}
+		return gateRuntime.BackendStatus(serverID, expectedToken)
+	}
+	router := api.NewRouter(cfg, api.Dependencies{Store: st, Geo: geoSvc, GateReady: gateReady, GateStats: gateStats, GateBackendStatus: gateBackendStatus})
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

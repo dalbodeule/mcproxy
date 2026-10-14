@@ -15,7 +15,7 @@ const maxAuditOffset = 1_000_000
 // ListAudits is the control-plane audit read path. The server filter is kept
 // here so scoped administration does not share query construction with the
 // asynchronous writer.
-func (s *Store) ListAudits(ctx context.Context, limit, offset int, event string, serverIDs []int) ([]AuditDTO, error) {
+func (s *Store) ListAudits(ctx context.Context, limit, offset int, event, actor string, serverIDs []int) ([]AuditDTO, error) {
 	// 101 is reserved for the API's look-ahead query; public responses still
 	// return at most the requested 100 records.
 	if limit <= 0 || limit > 101 {
@@ -30,6 +30,9 @@ func (s *Store) ListAudits(ctx context.Context, limit, offset int, event string,
 	q := s.client.Audit.Query().Order(ent.Desc(audit.FieldCreatedAt), ent.Desc(audit.FieldID)).Limit(limit).Offset(offset).WithServer()
 	if event = strings.TrimSpace(event); event != "" {
 		q = q.Where(audit.EventEQ(event))
+	}
+	if actor = strings.TrimSpace(actor); actor != "" {
+		q = q.Where(audit.ActorContainsFold(actor))
 	}
 	if len(serverIDs) > 0 {
 		predicates := make([]entpredicate.Audit, 0, len(serverIDs))

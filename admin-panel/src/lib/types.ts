@@ -48,6 +48,14 @@ export type Server = {
 	bungeeguard_allowed_token?: string;
 };
 
+export type ServerHealth = {
+	server_id: number;
+	status: 'healthy' | 'unreachable' | 'disabled' | 'unknown';
+	healthy: boolean;
+	gate_registered?: boolean;
+	gate_token_applied?: boolean;
+};
+
 export type Audit = {
 	id: number;
 	event: string;

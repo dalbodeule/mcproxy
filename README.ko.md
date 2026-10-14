@@ -105,6 +105,7 @@ Gate 백엔드 연결
 - 서버별 BungeeGuard 모드에서는 mcproxy가 해당 백엔드의 `bungeeguard_allowed_token`을 handshake에 넣습니다. 공식 BungeeGuard 플러그인은 `/api/v1/servers/` 응답의 정확한 토큰을 `plugins/BungeeGuard/config.yml`의 `allowed-tokens:` 목록 항목으로 추가하고, placeholder/이전 토큰을 제거한 뒤 `bungeeguard reload`를 실행하세요. `allowed-token`(단수)은 공식 키가 아닙니다. 관리패널의 `Regenerate token` 또는 `POST /api/v1/servers/{id}/bungeeguard-token`으로 32자 토큰을 회전할 수 있으며, 회전 후에는 백엔드 설정을 갱신하고 reload해야 합니다. 전역 `MCPROXY_GATE_BUNGEGUARD_SECRET`는 서버별 토큰 원칙에 어긋나므로 배포 preflight가 거부합니다. BungeeGuard는 반드시 서버별 토큰을 사용합니다.
 - 민감한 설정은 Docker/Kubernetes Secret 파일 마운트용 표준 `*_FILE` 형식도 지원합니다(예: `MCPROXY_ADMIN_TOKEN_FILE=/run/secrets/admin-token`). 같은 설정의 환경변수가 함께 있으면 환경변수가 우선하며, 관리자 토큰·선택적 패널 actor 서명 secret·PostgreSQL DSN·Redis 비밀번호·전역 Velocity forwarding secret에 적용됩니다. BungeeGuard는 전역 secret을 사용하지 않고 백엔드별로 생성·선택되는 토큰을 사용합니다.
 - 서버별 `ping_motd`를 서버 API 또는 관리패널에서 설정할 수 있습니다. hostname으로 라우팅된 상태 ping에는 해당 MOTD가 표시되고, 매칭되지 않은 hostname에는 fallback MOTD가 표시됩니다.
+- 같은 `public_host` 또는 `public_addr`를 가진 활성 백엔드는 하나의 분배 그룹으로 묶이며, 클라이언트 IP 해시를 기준으로 대략 균등하게 선택됩니다. 매칭되는 공개 라우트가 없을 때는 공개 라우트가 지정된 서버를 포함한 모든 활성 백엔드가 기본 분배 풀로 동작하고, 접속자의 ephemeral TCP 포트는 분배 키에서 제외되어 재접속 시 선택이 안정적입니다.
 
 ### Minecraft 26.3 접속 오류
 

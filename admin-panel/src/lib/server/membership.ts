@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { ADMIN_PANEL_DB_PATH } from '$app/env/private';
 import { panelPassword, panelSessionSecret, panelUsername } from './secrets.js';
+import { revokeAllSessions } from './session.js';
 
 export const roles = ['owner', 'admin', 'operator', 'auditor', 'viewer'] as const;
 export type Role = (typeof roles)[number];
@@ -12,7 +13,7 @@ const MIN_PASSWORD_LENGTH = 12;
 const MAX_PASSWORD_LENGTH = 256;
 const MAX_USERNAME_LENGTH = 128;
 const MAX_SCOPE_ENTRIES = 256;
-const MEMBERSHIP_SCHEMA_VERSION = 1;
+const MEMBERSHIP_SCHEMA_VERSION = 2;
 
 export type Member = {
 	id: string;
@@ -40,6 +41,16 @@ export type PanelAudit = {
 	event: string;
 	subject: string;
 	createdAt: string;
+};
+
+export type IncidentNote = {
+	id: string;
+	title: string;
+	note: string;
+	status: 'open' | 'closed';
+	actor: string;
+	createdAt: string;
+	updatedAt: string;
 };
 
 let database: DatabaseSync | undefined;
@@ -87,6 +98,15 @@ function db() {
 				event TEXT NOT NULL,
 				subject TEXT NOT NULL,
 				created_at TEXT NOT NULL
+			);
+			CREATE TABLE IF NOT EXISTS panel_incidents (
+				id TEXT PRIMARY KEY,
+				title TEXT NOT NULL,
+				note TEXT NOT NULL,
+				status TEXT NOT NULL CHECK (status IN ('open', 'closed')),
+				created_by TEXT NOT NULL,
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL
 			);
 			CREATE TABLE IF NOT EXISTS panel_mfa (
 				user_id TEXT PRIMARY KEY,
@@ -331,6 +351,15 @@ export function resetMemberMFA(userId: string, actor: string) {
 	return true;
 }
 
+export function revokeMemberSessions(userId: string, actor: string) {
+	const store = db();
+	const row = store.prepare('SELECT username FROM panel_users WHERE id = ?').get(userId) as { username: string } | undefined;
+	if (!row) return false;
+	revokeAllSessions(userId);
+	recordAudit(store, actor, 'member.sessions_revoke', row.username);
+	return true;
+}
+
 export function resetMemberPassword(userId: string, actor: string) {
 	const temporary = `${base32Encode(randomBytes(12)).slice(0, 8)}-${base32Encode(randomBytes(12)).slice(0, 8)}`;
 	const store = db();
@@ -344,11 +373,28 @@ export function resetMemberPassword(userId: string, actor: string) {
 export function updateMember(userId: string, role: Role, serverScope: number[], actor: string) {
 	if (!roles.includes(role)) return null;
 	const store = db();
-	const row = store.prepare('SELECT username FROM panel_users WHERE id = ?').get(userId) as { username: string } | undefined;
-	if (!row) return null;
-	store.prepare('UPDATE panel_users SET role = ?, server_scope = ? WHERE id = ?').run(role, JSON.stringify(normalizeScope(serverScope)), userId);
-	recordAudit(store, actor, 'member.update', row.username);
-	return true;
+	store.exec('BEGIN IMMEDIATE');
+	try {
+		const row = store.prepare('SELECT username, role, active FROM panel_users WHERE id = ?').get(userId) as { username: string; role: string; active: number } | undefined;
+		if (!row) {
+			store.exec('COMMIT');
+			return null;
+		}
+		if (row.active === 1 && row.role === 'owner' && role !== 'owner') {
+			const owners = Number((store.prepare("SELECT COUNT(*) AS count FROM panel_users WHERE role = 'owner' AND active = 1").get() as { count: number }).count);
+			if (owners <= 1) {
+				store.exec('COMMIT');
+				return false;
+			}
+		}
+		store.prepare('UPDATE panel_users SET role = ?, server_scope = ? WHERE id = ?').run(role, JSON.stringify(normalizeScope(serverScope)), userId);
+		recordAudit(store, actor, 'member.update', row.username);
+		store.exec('COMMIT');
+		return true;
+	} catch (error) {
+		store.exec('ROLLBACK');
+		throw error;
+	}
 }
 
 export function setMemberActive(userId: string, active: boolean, actor: string) {
@@ -397,9 +443,12 @@ export function createInvitation(username: string, role: Role, serverScope: numb
 	const store = db();
 	const existing = store.prepare('SELECT 1 FROM panel_users WHERE username = ? COLLATE NOCASE').get(username.trim());
 	if (existing) throw new Error('member already exists');
-	store.prepare('INSERT INTO panel_invitations (id, token_hash, username, role, server_scope, expires_at, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(id(), createHash('sha256').update(rawToken).digest('hex'), username.trim(), role, JSON.stringify(normalizeScope(serverScope)), expiresAt, createdBy, now.toISOString());
+	const pending = store.prepare('SELECT 1 FROM panel_invitations WHERE username = ? COLLATE NOCASE AND used_at IS NULL AND expires_at > ?').get(username.trim(), now.toISOString());
+	if (pending) throw new Error('invitation already exists');
+	const invitationID = id();
+	store.prepare('INSERT INTO panel_invitations (id, token_hash, username, role, server_scope, expires_at, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(invitationID, createHash('sha256').update(rawToken).digest('hex'), username.trim(), role, JSON.stringify(normalizeScope(serverScope)), expiresAt, createdBy, now.toISOString());
 	recordAudit(store, createdBy, 'member.invite', username.trim());
-	return { token: rawToken, expiresAt };
+	return { id: invitationID, token: rawToken, expiresAt };
 }
 
 export function acceptInvitation(token: string, password: string) {
@@ -438,7 +487,44 @@ export function listInvitations(): Invitation[] {
 	return (db().prepare('SELECT * FROM panel_invitations ORDER BY created_at DESC').all() as Record<string, unknown>[]).map((row) => ({ id: String(row.id), username: String(row.username), role: normalizeRole(String(row.role)), serverScope: normalizeScope(JSON.parse(String(row.server_scope))), expiresAt: String(row.expires_at), usedAt: row.used_at ? String(row.used_at) : null, createdBy: String(row.created_by) }));
 }
 
+export function revokeInvitation(invitationID: string, actor: string) {
+	const store = db();
+	const row = store.prepare('SELECT username, used_at FROM panel_invitations WHERE id = ?').get(invitationID) as { username: string; used_at: string | null } | undefined;
+	if (!row || row.used_at) return false;
+	store.prepare('DELETE FROM panel_invitations WHERE id = ? AND used_at IS NULL').run(invitationID);
+	recordAudit(store, actor, 'member.invite_revoke', row.username);
+	return true;
+}
+
 export function listPanelAudits(): PanelAudit[] {
 	ensureBootstrapUser();
 	return (db().prepare('SELECT * FROM panel_audit ORDER BY created_at DESC LIMIT 100').all() as Record<string, unknown>[]).map((row) => ({ id: String(row.id), actor: String(row.actor), event: String(row.event), subject: String(row.subject), createdAt: String(row.created_at) }));
+}
+
+export function listIncidentNotes(): IncidentNote[] {
+	ensureBootstrapUser();
+	return (db().prepare('SELECT * FROM panel_incidents ORDER BY CASE status WHEN \'open\' THEN 0 ELSE 1 END, updated_at DESC LIMIT 100').all() as Record<string, unknown>[]).map((row) => ({
+		id: String(row.id), title: String(row.title), note: String(row.note), status: row.status === 'closed' ? 'closed' : 'open', actor: String(row.created_by), createdAt: String(row.created_at), updatedAt: String(row.updated_at)
+	}));
+}
+
+export function createIncidentNote(title: string, note: string, actor: string) {
+	const normalizedTitle = title.trim();
+	const normalizedNote = note.trim();
+	if (!normalizedTitle || normalizedTitle.length > 200 || !normalizedNote || normalizedNote.length > 10_000) return null;
+	const store = db();
+	const now = new Date().toISOString();
+	const incidentID = id();
+	store.prepare('INSERT INTO panel_incidents (id, title, note, status, created_by, created_at, updated_at) VALUES (?, ?, ?, \'open\', ?, ?, ?)').run(incidentID, normalizedTitle, normalizedNote, actor, now, now);
+	recordAudit(store, actor, 'incident.create', normalizedTitle);
+	return incidentID;
+}
+
+export function closeIncidentNote(incidentID: string, actor: string) {
+	const store = db();
+	const row = store.prepare('SELECT title, status FROM panel_incidents WHERE id = ?').get(incidentID) as { title: string; status: string } | undefined;
+	if (!row || row.status === 'closed') return false;
+	store.prepare('UPDATE panel_incidents SET status = \'closed\', updated_at = ? WHERE id = ? AND status = \'open\'').run(new Date().toISOString(), incidentID);
+	recordAudit(store, actor, 'incident.close', row.title);
+	return true;
 }

@@ -1,6 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { createInvitation, getMember, listInvitations, listMembers, listPanelAudits, resetMemberMFA, resetMemberPassword, roles, setMemberActive, updateMember, type Role } from '#lib/server/membership.js';
+import { createInvitation, getMember, listInvitations, listMembers, listPanelAudits, resetMemberMFA, resetMemberPassword, revokeInvitation, revokeMemberSessions, roles, setMemberActive, updateMember, type Role } from '#lib/server/membership.js';
 import { readSessionClaims, revokeAllSessions, SESSION_COOKIE } from '#lib/server/session.js';
 import { panelMessage } from '#lib/server/messages.js';
 
@@ -35,9 +35,26 @@ function canManageMember(actor: { role: Role; serverScope: number[] }, target: {
 	return target.serverScope.length > 0 && target.serverScope.every((serverID) => actor.serverScope.includes(serverID));
 }
 
-export const load: PageServerLoad = ({ cookies }) => {
+function canSeeMember(actor: { userId: string; role: Role; serverScope: number[] }, target: { id: string; serverScope: number[] }) {
+	if (target.id === actor.userId || actor.role === 'owner' || actor.serverScope.length === 0) return true;
+	return target.serverScope.length > 0 && target.serverScope.every((serverID) => actor.serverScope.includes(serverID));
+}
+
+export const load: PageServerLoad = ({ cookies, url }) => {
 	const claims = currentUser(cookies);
-	return { members: listMembers(), invitations: listInvitations(), audits: listPanelAudits(), role: claims.role, currentUserId: claims.userId };
+	const memberSearch = (url.searchParams.get('q') ?? '').trim().toLowerCase();
+	const memberRole = url.searchParams.get('role') ?? '';
+	const memberLimit = 25;
+	const requestedMemberOffset = Math.max(0, Number(url.searchParams.get('offset') ?? 0) || 0);
+	const visibleMembers = listMembers().filter((member) => canSeeMember(claims, member));
+	const filteredMembers = visibleMembers.filter((member) => (!memberSearch || member.username.toLowerCase().includes(memberSearch)) && (!memberRole || member.role === memberRole));
+	const memberOffset = filteredMembers.length === 0 ? 0 : Math.min(requestedMemberOffset, Math.floor((filteredMembers.length - 1) / memberLimit) * memberLimit);
+	const members = filteredMembers.slice(memberOffset, memberOffset + memberLimit);
+	const memberActiveTotal = filteredMembers.filter((member) => member.active).length;
+	const invitations = listInvitations().filter((invitation) => canManageMember(claims, { role: invitation.role, serverScope: invitation.serverScope }));
+	const visibleUsernames = new Set(visibleMembers.map((member) => member.username));
+	const audits = listPanelAudits().filter((audit) => visibleUsernames.has(audit.subject) || audit.actor === claims.username);
+	return { members, invitations, audits, role: claims.role, currentServerScope: claims.serverScope, currentUserId: claims.userId, memberSearch, memberRole, memberOffset, memberLimit, memberTotal: filteredMembers.length, memberActiveTotal, memberHasPrevious: memberOffset > 0, memberHasNext: memberOffset + memberLimit < filteredMembers.length };
 };
 
 export const actions: Actions = {
@@ -52,7 +69,7 @@ export const actions: Actions = {
 		if (!username || !roles.includes(role) || scope === null || (role === 'owner' && claims.role !== 'owner') || !canAssignScope(claims, scope)) return fail(400, { error: panelMessage(cookies, 'msg.invalidMember') });
 		try {
 			const invitation = createInvitation(username, role, scope, claims.username);
-			return { success: panelMessage(cookies, 'msg.invitationCreated'), inviteURL: `${url.origin}/invite?token=${encodeURIComponent(invitation.token)}`, expiresAt: invitation.expiresAt };
+			return { success: panelMessage(cookies, 'msg.invitationCreated'), invitationID: invitation.id, inviteURL: `${url.origin}/invite?token=${encodeURIComponent(invitation.token)}`, expiresAt: invitation.expiresAt };
 		} catch {
 			return fail(400, { error: panelMessage(cookies, 'msg.invitationFailed') });
 		}
@@ -80,6 +97,16 @@ export const actions: Actions = {
 		revokeAllSessions(target.id);
 		return { success: panelMessage(cookies, 'msg.mfaReset', { username: target.username }) };
 	},
+	revokeSessions: async ({ request, cookies }) => {
+		const claims = currentUser(cookies);
+		if (claims.role !== 'owner' && claims.role !== 'admin') return fail(403, { error: panelMessage(cookies, 'msg.permission') });
+		const userId = String((await request.formData()).get('user_id') ?? '');
+		const target = listMembers().find((member) => member.id === userId);
+		const actor = getMember(claims.userId);
+		if (!target || !actor || target.id === claims.userId || (claims.role === 'admin' && target.role === 'owner') || !canManageMember(actor, target)) return fail(400, { error: panelMessage(cookies, 'msg.memberCannotChange') });
+		if (!revokeMemberSessions(target.id, claims.username)) return fail(404, { error: panelMessage(cookies, 'msg.memberNotFound') });
+		return { success: panelMessage(cookies, 'msg.sessionsRevoked', { username: target.username }) };
+	},
 	updateMember: async ({ request, cookies }) => {
 		const claims = currentUser(cookies);
 		if (claims.role !== 'owner' && claims.role !== 'admin') return fail(403, { error: panelMessage(cookies, 'msg.permission') });
@@ -90,7 +117,9 @@ export const actions: Actions = {
 		const scope = parseScope(String(form.get('server_scope') ?? ''));
 		const actor = getMember(claims.userId);
 		if (!target || !actor || scope === null || target.id === claims.userId || (claims.role === 'admin' && (target.role === 'owner' || role === 'owner')) || !roles.includes(role) || !canManageMember(actor, target) || !canAssignScope(actor, scope)) return fail(400, { error: panelMessage(cookies, 'msg.memberCannotChange') });
-		if (!updateMember(target.id, role, scope, claims.username)) return fail(404, { error: panelMessage(cookies, 'msg.memberNotFound') });
+		const updated = updateMember(target.id, role, scope, claims.username);
+		if (updated === false) return fail(400, { error: panelMessage(cookies, 'msg.lastOwner') });
+		if (updated === null) return fail(404, { error: panelMessage(cookies, 'msg.memberNotFound') });
 		revokeAllSessions(target.id);
 		return { success: panelMessage(cookies, 'msg.memberUpdated') };
 	},
@@ -108,5 +137,14 @@ export const actions: Actions = {
 		if (result === null) return fail(404, { error: panelMessage(cookies, 'msg.memberNotFound') });
 		if (!active) revokeAllSessions(target.id);
 		return { success: panelMessage(cookies, active ? 'msg.memberActivated' : 'msg.memberDeactivated') };
+	},
+	revokeInvitation: async ({ request, cookies }) => {
+		const claims = currentUser(cookies);
+		const invitationID = String((await request.formData()).get('invitation_id') ?? '');
+		const invitation = listInvitations().find((item) => item.id === invitationID);
+		const actor = getMember(claims.userId);
+		if (!actor || !invitation || invitation.usedAt || (claims.role === 'admin' && invitation.role === 'owner') || !canManageMember(actor, { role: invitation.role, serverScope: invitation.serverScope })) return fail(400, { error: panelMessage(cookies, 'msg.invitationCannotChange') });
+		if (!revokeInvitation(invitationID, claims.username)) return fail(404, { error: panelMessage(cookies, 'msg.invitationCannotChange') });
+		return { success: panelMessage(cookies, 'msg.invitationRevoked') };
 	}
 };
