@@ -4,7 +4,7 @@ go 1.27
 
 require (
 	entgo.io/ent v0.14.6 // ORM (codegen)
-	github.com/go-chi/chi/v5 v5.4.0 // HTTP router
+	github.com/go-chi/chi/v5 v5.5.0 // HTTP router
 	github.com/go-logr/logr v1.4.4
 	github.com/jackc/pgx/v5 v5.11.0 // PostgreSQL driver core
 	github.com/joho/godotenv v1.3.0
