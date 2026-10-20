@@ -12,7 +12,7 @@ require (
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/robinbraemer/event v0.1.1
 	go.minekube.com/common v0.4.0
-	go.minekube.com/gate v0.74.41
+	go.minekube.com/gate v0.74.42
 	modernc.org/sqlite v1.60.1 // SQLite (pure Go)
 )
 
@@ -79,7 +79,7 @@ require (
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	golang.org/x/tools v0.52.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20261005182115-fad411399dd8 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261012220534-4341edf3f941 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.77.1 // indirect
