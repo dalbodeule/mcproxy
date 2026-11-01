@@ -14,7 +14,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X mcproxy/inter
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /out/mcproxy-init ./cmd/mcproxy-init
 RUN mkdir -p /out/data && touch /out/data/.keep && chown -R 65532:65532 /out/data
 
-FROM gcr.io/distroless/base-debian13@sha256:389cad21f73e4c37b94ffe5b13736d5a92bd5bd3c6c6b38c2be1c881e14ba2bd AS runner
+FROM gcr.io/distroless/base-debian13@sha256:075a33d9c49026ca7ee72738b4c4a1caea55d0f44227356e46a611a211050e20 AS runner
 COPY --from=builder /out/mcproxy /app/mcproxy
 COPY --from=builder /out/mcproxy-init /app/mcproxy-init
 COPY --from=builder --chown=nonroot:nonroot /out/data/ /data/
