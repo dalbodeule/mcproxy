@@ -6,7 +6,7 @@ require (
 	entgo.io/ent v0.14.6 // ORM (codegen)
 	github.com/go-chi/chi/v5 v5.4.0 // HTTP router
 	github.com/go-logr/logr v1.4.4
-	github.com/jackc/pgx/v5 v5.11.0 // PostgreSQL driver core
+	github.com/jackc/pgx/v5 v5.12.0 // PostgreSQL driver core
 	github.com/joho/godotenv v1.3.0
 	github.com/oschwald/geoip2-golang v1.13.0 // GeoIP reader
 	github.com/redis/go-redis/v9 v9.23.0
@@ -43,7 +43,7 @@ require (
 	github.com/hashicorp/hcl/v2 v2.25.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/jackc/puddle/v2 v2.2.3 // indirect
 	github.com/jellydator/ttlcache/v3 v3.4.1 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
